@@ -85,10 +85,12 @@ Prints the versions of ccunified and of the bundled ccusage.
 
 ## For the dashboard on Cloudflare
 
-These change the dashboard itself, so each asks for a Cloudflare API token,
-created the same way as during setup (see
-[Create your dashboard](setup.md#2-create-the-cloudflare-api-token)). The
-token is used only while the command runs.
+These change the dashboard itself, so each asks for a Cloudflare API token
+with the same permissions as during setup. Each shows a link that opens
+Cloudflare's token page with those permissions filled in, and lists them (see
+also [Create your dashboard](setup.md#2-create-the-cloudflare-api-token)). The
+token is used only while the command runs; a token from earlier that hasn't
+expired works too.
 
 ### `ccunified server update`
 

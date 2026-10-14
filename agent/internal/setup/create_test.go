@@ -257,8 +257,8 @@ func TestCreateFailurePartwayOffersCleanup(t *testing.T) {
 }
 
 func TestTokenTemplateURL(t *testing.T) {
-	u := TokenTemplateURL()
-	for _, want := range []string{"permissionGroupKeys=", "workers_scripts", "accountId=%2A", "zoneId=all"} {
+	u := TokenTemplateURL("ccunified setup")
+	for _, want := range []string{"permissionGroupKeys=", "workers_scripts", "accountId=%2A", "zoneId=all", "name=ccunified+setup"} {
 		if !strings.Contains(u, want) {
 			t.Errorf("%s lacks %s", u, want)
 		}

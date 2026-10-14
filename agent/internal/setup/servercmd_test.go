@@ -37,6 +37,12 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
+	// It explains how to create the token, like setup does.
+	for _, want := range []string{TokenTemplateURL("ccunified server"), "Account > Workers Scripts > Edit", "Zone > DNS > Read", "Create Token"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
 	// Running it again finds nothing to migrate.
 	out.Reset()
 	serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t))

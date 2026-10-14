@@ -76,8 +76,8 @@ var tokenPermissions = []struct{ Label, Key, Type string }{
 }
 
 // TokenTemplateURL opens Cloudflare's "create token" page with the
-// permissions filled in.
-func TokenTemplateURL() string {
+// permissions filled in and the token named name.
+func TokenTemplateURL(name string) string {
 	type key struct {
 		Key  string `json:"key"`
 		Type string `json:"type"`
@@ -87,23 +87,28 @@ func TokenTemplateURL() string {
 		keys[i] = key{p.Key, p.Type}
 	}
 	b, _ := json.Marshal(keys)
-	q := url.Values{"permissionGroupKeys": {string(b)}, "accountId": {"*"}, "zoneId": {"all"}, "name": {"ccunified setup"}}
+	q := url.Values{"permissionGroupKeys": {string(b)}, "accountId": {"*"}, "zoneId": {"all"}, "name": {name}}
 	return "https://dash.cloudflare.com/profile/api-tokens?" + q.Encode()
 }
 
-// TokenHelp explains how to create the API token the wizard needs.
-func TokenHelp() string {
+// tokenSteps explains how to create an API token named name: the link, the
+// permissions to check and what to click.
+func tokenSteps(name string) string {
 	var b strings.Builder
-	b.WriteString("To create the dashboard, ccunified needs a Cloudflare API token. It is\n")
-	b.WriteString("used only while this setup runs and is never saved.\n\n")
 	b.WriteString("Open this link to create one with the right permissions filled in:\n\n  ")
-	b.WriteString(TokenTemplateURL())
+	b.WriteString(TokenTemplateURL(name))
 	b.WriteString("\n\nCheck that it lists exactly these permissions (add any that are missing):\n")
 	for _, p := range tokenPermissions {
 		b.WriteString("  " + p.Label + "\n")
 	}
 	b.WriteString("Then click \"Continue to summary\", \"Create Token\", and copy the token.\n")
 	return b.String()
+}
+
+// TokenHelp explains how to create the API token the wizard needs.
+func TokenHelp() string {
+	return "To create the dashboard, ccunified needs a Cloudflare API token. It is\n" +
+		"used only while this setup runs and is never saved.\n\n" + tokenSteps("ccunified setup")
 }
 
 var subdomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

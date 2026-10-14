@@ -33,7 +33,8 @@ type installation struct {
 // findInstallation asks for a token and locates the dashboard's resources.
 func findInstallation(ctx context.Context, p *prompt.Prompter, factory CloudflareFactory, why string) (*installation, error) {
 	p.Printf("%s needs a Cloudflare API token with the same permissions as setup.\n", why)
-	p.Printf("It is used only now and never saved.\n\n")
+	p.Printf("It is used only now and never saved. A token from earlier that hasn't\n")
+	p.Printf("expired works too.\n\n%s\n", tokenSteps("ccunified server"))
 	var cf Cloudflare
 	var accounts []Account
 	if _, err := p.Secret("Paste the API token (it won't be shown)", func(token string) error {

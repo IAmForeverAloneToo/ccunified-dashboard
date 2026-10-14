@@ -15,7 +15,7 @@ import (
 )
 
 // ErrCancelled means the input ended (Ctrl+D / Ctrl+Z) before an answer.
-var ErrCancelled = errors.New("setup cancelled")
+var ErrCancelled = errors.New("cancelled")
 
 type Prompter struct {
 	in  *bufio.Reader
