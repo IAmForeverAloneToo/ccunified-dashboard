@@ -1,319 +1,402 @@
 # ccunified: project plan
 
-A small program on each of your machines reads Claude Code's local usage logs
-using ccusage. Every 30 minutes it sends daily token totals to a Cloudflare
-Worker on your domain, and the Worker shows all machines on one dashboard
-page behind a login.
+`ccunified` is a small program you install on each of your machines. It reads
+Claude Code's local usage logs using ccusage, then uploads daily token totals
+to a dashboard on your own domain, hosted on your own Cloudflare account. All
+your machines appear on one page.
 
-Status: **plan only. Nothing is built yet.** Step 0 (your decisions) comes first.
+The repository is public and contains **no configuration and no secrets**. No
+domain, account ID, email, password or key is written into the code. All of
+that is entered in the setup wizard on your own machine and goes straight to
+your Cloudflare account.
 
----
-
-## 1. Architecture
-
-```
- Each machine (Windows / macOS / Linux)          Cloudflare, on your domain
- ┌────────────────────────────────┐              ┌──────────────────────────────────────┐
- │ OS scheduler, every 30 min     │              │ usage.yourdomain.com                 │
- │   └─ ccunified sync            │   HTTPS      │ Worker (TypeScript)                  │
- │        ├─ runs ccusage         │──POST───────▶│  ├─ /agent/*  machines (own token)   │
- │        │  (pinned version)     │  daily       │  ├─ /api/*    dashboard data         │
- │        └─ reads ~/.claude logs │  totals per  │  └─ /         dashboard page         │
- │                                │  model       │ D1 database (SQLite)                 │
- └────────────────────────────────┘              │ Cloudflare Access login in front of  │
-                                                 │ everything except /agent/*           │
-                                                 └──────────────────────────────────────┘
-```
-
-Machines only send data out; nothing connects in to them. They send totals,
-not log files.
+Status: **plan only. Nothing is built yet.**
 
 ---
 
-## 2. Languages
+## 1. Decisions so far
+
+| Topic | Decision |
+|---|---|
+| Machines to support | Windows x64 and Linux x64 (Ubuntu and other distributions). The code is kept ready for macOS later |
+| Tools tracked | Claude Code only for now. The database leaves room to add others later |
+| Configuration | Domain, subdomain, timezone, accounts and sync interval are all chosen in the setup wizard; nothing is written into the code |
+| Setup wizard | Step-by-step prompts in the terminal (also works over SSH on servers without a desktop) |
+| Cloudflare setup | Done by the wizard on the first machine, using a Cloudflare API token you paste in |
+| Cloudflare token | Used during setup and then discarded. Later server changes ask for it again |
+| Dashboard login | Built-in username and password, checked by the Worker itself (no Cloudflare Access) |
+| Accounts | Multiple users with two roles: **admin** (manages users and machines) and **viewer** (read-only) |
+| Two-factor | Optional for each user, using authenticator-app codes, with recovery codes |
+| Adding a machine | The new machine shows a short code; an admin approves that code in the dashboard |
+| Sync interval | Chosen in setup (15, 30 or 60 minutes; default 30), changeable later with a command |
+| Linux while logged out | Keeps syncing; setup may ask for your sudo password once to allow this |
+| Updates | The dashboard flags out-of-date machines; you run `ccunified update` on each one when you choose |
+| Program name | `ccunified` |
+| Git | Everything is pushed to `Main` |
+
+---
+
+## 2. How one dashboard works with many machines
+
+```
+ FIRST MACHINE: "Create a new dashboard"
+   wizard asks for: Cloudflare API token, domain, subdomain,
+                    timezone, admin username + password, sync interval
+   wizard then:     creates the database, uploads the Worker,
+                    attaches usage.<your-domain>, creates the admin account,
+                    enrolls this machine, starts the background sync,
+                    and discards the Cloudflare token
+
+ EVERY OTHER MACHINE: "Join an existing dashboard"
+   wizard asks for: dashboard address, machine name, sync interval
+   machine shows:   "Approve code K7QX-82MD at https://usage.<your-domain>"
+   admin:           logs in from any device, clicks Approve next to K7QX-82MD
+   machine:         receives its own upload key, starts the background sync
+
+ Each machine (every 15/30/60 min)                    Cloudflare (your account)
+ ┌───────────────────────────────┐   HTTPS POST     ┌──────────────────────────────┐
+ │ ccunified sync                │  daily totals    │ Worker (TypeScript)          │
+ │  └─ runs bundled ccusage      │ ───────────────▶ │  ├─ /agent/*  machine keys   │
+ │      └─ reads ~/.claude logs  │  per model       │  ├─ /api/*    logged-in users│
+ └───────────────────────────────┘                  │  └─ /         dashboard page │
+                                                    │ D1 database                  │
+                                                    └──────────────────────────────┘
+```
+
+- **Where things are stored:**
+  - Users, passwords and settings: in your Cloudflare D1 database.
+  - Each machine: only its own upload key, which can send data but can't read
+    the dashboard.
+- **Upload keys:** every machine has a different one, so revoking a lost
+  laptop doesn't affect the others.
+
+---
+
+## 3. Languages
 
 | Part | Language | Why |
 |---|---|---|
-| Machine agent | **Go** | Builds into one small program for every OS with nothing else to install |
-| Cloudflare Worker | **TypeScript** | Workers run JavaScript natively; TypeScript is fully supported there |
-| Dashboard page | **TypeScript + HTML/CSS** | Runs in the browser; no framework needed for one page |
+| Machine program (`ccunified`) | **Go** | One self-contained program per OS; your machines need nothing pre-installed |
+| Cloudflare Worker | **TypeScript** | Workers run JavaScript natively |
+| Dashboard page | **TypeScript + HTML/CSS** | Runs in the browser; no framework needed |
 
-### Why Go for the agent
+### Why Go for the machine program
 
 Checked in this session:
 
-- **ccusage v20 no longer needs Node.js.** The npm package is now only a
-  wrapper around a native program written in Rust, about 5 MB. It is
-  published for all six targets: Windows, macOS and Linux, each on x64 and
-  ARM64. I ran the Linux build on its own against sample Claude logs and it
-  produced the expected JSON. It is MIT-licensed, so we can ship it
-  alongside our agent.
-- So the agent is the only part that could force a runtime onto your
-  machines. Go removes that. One build command produces all six programs,
-  about 8 MB each. No special toolchains are needed, unlike building Rust
-  for macOS from Linux.
-- Go's standard library covers everything the agent does: HTTP requests,
-  JSON, config files and running ccusage.
+- **ccusage v20 is a native program written in Rust, about 5 MB.** It is
+  published for Windows, Linux and macOS and doesn't need Node.js. I ran it
+  on its own against sample Claude logs and the output was correct. It is
+  MIT-licensed, so we can ship it alongside our program.
+- **Go builds a small, self-contained program for Windows and Linux from one
+  build command**, with macOS a one-line addition later. Its standard library
+  covers HTTP, JSON, running ccusage and calling the Cloudflare API.
+- **The Worker and dashboard are built at release time and packed inside
+  `ccunified`.** The setup wizard uploads them through Cloudflare's API, so
+  **no machine ever needs Node.js, npm or Wrangler**, including the first one.
 
 Rejected options:
 
-- **TypeScript on Node.js on every machine.** You would have to install
-  Node everywhere just for our agent, now that ccusage itself doesn't need it.
-- **TypeScript compiled with Bun into one executable.** I tested this and it
-  works, but each program is 70–96 MB, against about 8 MB for Go.
-- **Python.** It isn't installed on Windows by default, and packaging it as
-  a single program is clumsy.
-- **PowerShell.** Windows only.
-- **Rust.** Produces the smallest programs, but it's slower to write and
-  harder to build for macOS.
+- **TypeScript on Node.js:** Node would have to be installed on every
+  machine.
+- **TypeScript compiled with Bun:** I tested it and it works, but each
+  program is 70–96 MB.
+- **Python:** not installed on Windows by default.
+- **PowerShell:** Windows only.
+- **Rust:** slower to write and harder to build for every OS.
 
-Two languages mean the data format sent from machine to Worker is defined in
-two places. To keep them in sync, one JSON Schema file plus shared example
-payloads are tested by both the Go tests and the TypeScript tests.
+The upload format is defined once as a JSON Schema in `schema/`. Shared
+example payloads are tested by both the Go tests and the TypeScript tests, so
+the two sides can't drift apart.
 
 ---
 
-## 3. Repository layout
+## 4. Repository layout
 
 ```
-agent/       Go: the `ccunified` command (enroll, sync, status, uninstall)
-worker/      TypeScript: Cloudflare Worker, D1 migrations, wrangler config
-dashboard/   TypeScript: the web page (built with Vite, served by the Worker)
-schema/      payload JSON Schema + example payloads used by both test suites
-scripts/     build: fetch pinned ccusage programs, cross-compile, checksums
-docs/        setup runbook, Cloudflare Access steps
-.github/     CI: tests on Linux, macOS and Windows; builds; deploy
+agent/       Go: the ccunified program (setup wizard, sync, status, update, server commands)
+worker/      TypeScript: Cloudflare Worker + D1 migrations
+dashboard/   TypeScript: dashboard pages (bundled into the Worker)
+schema/      upload format JSON Schema + example payloads for both test suites
+scripts/     build: fetch pinned ccusage, bundle Worker, cross-compile, package
+docs/        user guide, Cloudflare token instructions, troubleshooting
+.github/     CI (Linux + Windows test machines) and release builds
 ```
 
 ---
 
-## 4. How each part works
+## 5. The machine program: `ccunified`
 
-### 4.1 Agent: `ccunified`
+### 5.1 Installing
+
+Releases are published on this repository's public GitHub Releases page. The
+repository must be public for these commands to work.
+
+```powershell
+# Windows (PowerShell, no admin needed)
+irm https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.ps1 | iex
+```
+```sh
+# Linux (no root needed)
+curl -fsSL https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.sh | sh
+```
+
+The installer downloads the release for your OS, checks it against the
+release's checksums, installs it into your user account and starts
+`ccunified setup`. Install locations:
+
+- Windows: `%LOCALAPPDATA%\Programs\ccunified\`, added to your PATH.
+- Linux: `~/.local/share/ccunified/`, with a link in `~/.local/bin`.
+
+### 5.2 Commands
 
 | Command | What it does |
 |---|---|
-| `ccunified enroll <code>` | Trades a one-time code for this machine's token, saves config, sets up the scheduler, then runs a first sync that uploads all history on disk |
-| `ccunified sync` | What the scheduler runs. Calls `ccusage claude daily --json --timezone <tz> --since <7 days ago>`, converts the result and sends it, retrying if the network fails |
-| `ccunified status` | Shows server, machine name, last sync time and result, and scheduler state |
-| `ccunified uninstall` | Removes the scheduler entry, config, logs and program files |
+| `ccunified setup` | The wizard: create a new dashboard, or join an existing one |
+| `ccunified sync` | What the background schedule runs; also safe to run by hand |
+| `ccunified status` | Dashboard address, machine name, last sync time and result, schedule state, versions |
+| `ccunified config set interval 15\|30\|60` | Change how often this machine uploads |
+| `ccunified update` | Download the latest release, verify it and replace itself |
+| `ccunified uninstall` | Remove the schedule, config, logs and program files from this machine |
+| `ccunified server update` | Upgrade the Cloudflare side to this program's version (asks for a Cloudflare token) |
+| `ccunified server reset-password <user>` | Recover a locked-out admin account (asks for a Cloudflare token) |
+| `ccunified server remove` | Delete the Worker, subdomain and database from Cloudflare, after a confirmation (asks for a Cloudflare token) |
 
-- **Install location:** a folder in your user account, so no admin rights or
-  sudo are needed. The ccusage program sits next to the agent.
-- **ccusage version:** pinned to an exact version (20.0.31 to start). The
-  agent checks ccusage's checksum before every run, and it never uses
-  `@latest`. Upgrading ccusage means releasing a new agent.
-- **Config:** stored in the standard place for each OS, and only your user
-  account can read it:
-  - Windows: `%APPDATA%\ccunified\`
-  - macOS: `~/Library/Application Support/ccunified/`
-  - Linux: `~/.config/ccunified/`
-- **Scheduling:** every 30 minutes. If the machine was asleep, the missed run
-  happens when it wakes.
-  - Windows: Task Scheduler, running hidden so no console window flashes up.
-  - macOS: launchd.
-  - Linux: systemd user timer, falling back to cron where systemd isn't
-    available.
-- **Sync window:** the first sync sends everything. Each later sync re-sends
-  the last 7 days. Sending a day twice never counts it twice, and if a
-  machine misses some runs, the next one fills the gap.
-- **Logging:** a small log file that rotates, so `status` and troubleshooting
-  have something to show.
+### 5.3 What the setup wizard asks
 
-### 4.2 Worker and D1 database
+**Create a new dashboard**
 
-Machine endpoints live under `/agent/*`. They are not behind the Access login
-and use per-machine tokens instead.
+1. **Cloudflare API token.** The wizard shows exactly which permissions to
+   tick and links to the token page. It checks the token before continuing.
+2. **Domain**, picked from the domains in your Cloudflare account.
+3. **Subdomain**, e.g. `usage`, giving `usage.<your-domain>`.
+4. **Timezone** for the dashboard's days. The default is this machine's
+   timezone, and admins can change it later in the dashboard.
+5. **Admin username and password**, which you type twice.
+6. **This machine's name** (the default is its hostname) and its **sync
+   interval**.
+7. A **summary to confirm**. The wizard then builds everything, starts the
+   background sync, runs the first upload and prints the dashboard address.
+   The token is then discarded.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /agent/install.ps1`, `GET /agent/install.sh` | One-line installers |
-| `GET /agent/download/<os>-<arch>` | Agent and ccusage programs |
-| `POST /agent/enroll` | One-time code in, machine token out |
-| `POST /agent/ingest` | Usage upload; the reply includes the reporting timezone |
+**Join an existing dashboard**
 
-Dashboard endpoints live under `/api/*`. They are behind the Access login, and
-the Worker also checks the login token itself.
+1. **Dashboard address.**
+2. **Machine name** and **sync interval**.
+3. The machine shows an approval code. An admin approves it in the
+   dashboard, and the wizard continues automatically.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/summary?from=&to=` | Totals by day × machine × model |
-| `GET /api/machines` | Machine list with health info |
-| `POST /api/machines` | Add a machine; returns a one-time enrollment code |
-| `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename or revoke a machine |
+### 5.4 Background sync
 
-Tables:
+**What each sync sends.** Each run calls the bundled ccusage like this:
 
-```sql
-machines (id, name, os, arch, agent_version, ccusage_version,
-          token_hash, created_at, last_seen_at, last_error, revoked_at)
-
-enrollment_codes (code_hash, machine_id, expires_at, used_at)
-
-usage_daily (machine_id, source, day, model,
-             input_tokens, output_tokens,
-             cache_creation_tokens, cache_read_tokens,
-             cost_usd, updated_at,
-             PRIMARY KEY (machine_id, source, day, model))
+```
+ccusage claude daily --json --timezone <dashboard timezone> --since <7 days ago>
 ```
 
-- `source` is `claude` for now. It leaves room to add Codex, Gemini CLI and
-  other tools ccusage reads, without changing the database.
-- **How uploads are saved:** each upload replaces the stored rows for every
-  machine and day it contains, all at once. Rows that haven't changed are not
-  rewritten, which keeps database writes near zero.
-- **One timezone for every machine:** you set it once at deploy, and the
-  Worker sends it to agents with each upload reply. That way every machine
-  agrees where a day starts and ends. If you change it, agents re-upload
-  their history in the new timezone.
+- The first sync sends all history still on disk. Claude Code deletes its
+  own logs after 30 days by default, so from then on the dashboard keeps the
+  long-term history.
+- Later syncs re-send the last 7 days. Sending a day twice never counts it
+  twice, and missed runs are filled in by the next one.
+- The dashboard's timezone comes back with every upload reply, so all
+  machines agree where a day starts and ends.
+- A failed upload is retried with increasing waits. Each run writes a short
+  line to a small log file that rotates.
 
-### 4.3 Dashboard
+**ccusage version.** ccusage is pinned to an exact version (20.0.31 to start)
+and ships inside each release. Its checksum is verified before every run. It
+is never downloaded as "latest" while running.
 
-- **Top row:** tokens for today, 7 days and 30 days; estimated cost at API
-  prices; how many machines are reporting.
-- **Daily chart:** stacked bars, switchable between per machine and per model.
-- **Machines table:** last seen (flagged if silent for more than 2 hours), OS,
-  agent version, 7- and 30-day totals, and rename or revoke buttons.
-- **Model breakdown.**
-- **Controls:** date range (7, 30 or 90 days, or all), refreshing every 60
-  seconds.
-- **Add machine:** shows a one-line install command for each OS, with a code
-  that works once and expires after 15 minutes:
+**How the schedule runs:**
 
-  ```powershell
-  # Windows (PowerShell)
-  & ([scriptblock]::Create((irm https://usage.yourdomain.com/agent/install.ps1))) -Code K7QX-82MD
-  ```
-  ```sh
-  # macOS / Linux
-  curl -fsSL https://usage.yourdomain.com/agent/install.sh | sh -s -- K7QX-82MD
-  ```
+- **Windows:** Task Scheduler, under your own user account. It runs a
+  windowless copy of the program (`ccunifiedw.exe`, the same idea as
+  `pythonw.exe`), so no console window flashes up. Missed runs happen when
+  the machine wakes.
+- **Linux:** a systemd user timer, with "lingering" enabled so it keeps
+  running while you're logged out. Enabling that may need your sudo password
+  once during setup. Where systemd isn't available, the wizard uses cron
+  instead.
+
+---
+
+## 6. The Cloudflare side
+
+### 6.1 Worker endpoints
+
+**For machines** (under `/agent/*`; they use upload keys, not logins):
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /agent/pair/start` | A new machine asks to join and receives its approval code |
+| `POST /agent/pair/poll` | The machine waits for approval, then receives its upload key |
+| `POST /agent/ingest` | Upload usage; the reply includes the timezone and the latest known version |
+
+**For people** (under `/api/*`; they need a login):
+
+| Endpoint | Purpose | Who |
+|---|---|---|
+| `POST /api/login`, `POST /api/logout` | Log in and out (with an authenticator code if turned on) | anyone |
+| `GET /api/summary?from=&to=` | Totals by day × machine × model | viewer, admin |
+| `GET /api/machines` | Machines and how recently each reported | viewer, admin |
+| `GET /api/pairing`, `POST /api/pairing/:code/approve`, `POST /api/pairing/:code/deny` | Machines waiting for approval | admin |
+| `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename or revoke a machine | admin |
+| `GET/POST/PATCH/DELETE /api/users…` | Manage users and roles | admin |
+| `POST /api/me/password`, `POST /api/me/2fa…` | Change your own password and turn two-factor on or off | anyone logged in |
+| `GET/PATCH /api/settings` | Timezone and other dashboard settings | admin |
+
+### 6.2 Database tables (D1)
+
+```sql
+settings          (key PRIMARY KEY, value)                 -- timezone, schema version, ...
+users             (id, username UNIQUE, password_hash, role,  -- role: admin | viewer
+                   totp_secret, totp_enabled, created_at, last_login_at, disabled_at)
+recovery_codes    (user_id, code_hash, used_at)
+sessions          (id_hash PRIMARY KEY, user_id, created_at, expires_at, last_seen_at)
+login_attempts    (key, window_start, count)               -- rate limiting
+pairing_requests  (id, device_code_hash, user_code, machine_name, os, arch,
+                   agent_version, created_at, expires_at, status, decided_by, machine_id)
+machines          (id, name, os, arch, agent_version, ccusage_version, sync_interval,
+                   token_hash, created_at, last_seen_at, last_error, revoked_at)
+usage_daily       (machine_id, source, day, model,
+                   input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                   cost_usd, updated_at,
+                   PRIMARY KEY (machine_id, source, day, model))
+```
+
+- **`source`** is `claude` for now; Codex, Gemini CLI and others can be added
+  later without changing the tables.
+- **How uploads are saved:** each upload replaces that machine's rows for the
+  days it contains, all at once. Rows that haven't changed are not rewritten,
+  which keeps database writes near zero.
+- **Nothing install-specific lives in the Worker's code.** Settings like the
+  timezone live in the `settings` table, so every install runs the same
+  Worker, and admins can change the settings from the dashboard.
+
+### 6.3 Dashboard pages
+
+- **Login**, which also asks for an authenticator code when two-factor is on.
+- **Overview:**
+  - Totals for today, 7 days and 30 days, with cost estimated at API prices.
+  - Daily stacked bar chart, switchable between per machine and per model.
+  - Model breakdown.
+  - Date range (7, 30 or 90 days, or all); refreshes every 60 seconds.
+- **Machines:** last seen (flagged when overdue for its own sync interval),
+  OS, program version (flagged when out of date), and 7- and 30-day totals.
+  Admins can rename or revoke machines.
+- **Approvals** (admin): machines waiting to join, showing code, name and OS,
+  with Approve and Deny buttons. The overview shows a badge when any are
+  waiting.
+- **Users** (admin): add a user, set their role, reset their password,
+  disable them.
+- **Account:** change your password, set up two-factor (QR code and recovery
+  codes).
+- **Settings** (admin): timezone, and the server version alongside the
+  latest release.
 - Works in light and dark mode, and on a phone.
 
 ---
 
-## 5. Security
+## 7. Security
 
-- **Dashboard login:** the dashboard and `/api/*` sit behind Cloudflare
-  Access, which emails a one-time PIN. It's free for up to 50 users. The
-  Worker also checks the Access login token itself, so if the Access rule is
-  misconfigured, the dashboard stays locked rather than open.
-- **The `*.workers.dev` address is turned off.** Every Worker gets one by
-  default, and it would get around the Access login.
-- **Machine tokens:** each machine has its own token, stored only as a hash.
-  You can revoke one lost laptop without touching the others. The token
-  decides which machine the data belongs to, so one machine can't write
-  another's data.
+- **The repository holds no secrets or install details.** Everything
+  install-specific is entered in the wizard and stored only in your
+  Cloudflare account or on your machine.
+- **Cloudflare token:** used only while the wizard runs, then discarded. The
+  wizard asks for the fewest permissions that do the job.
+- **Passwords:** stored only as slow, salted hashes (PBKDF2-SHA256), never
+  in plain text.
+- **Logging in:**
+  - The session cookie can't be read by scripts, is only sent over HTTPS,
+    and isn't sent with requests from other sites.
+  - Sessions are stored server-side, so logging out or disabling a user ends
+    them immediately.
+  - Repeated failed logins are slowed down and then locked out for a while.
+- **Two-factor:** optional per user, using authenticator-app codes (the
+  same kind Google Authenticator and 1Password produce), plus single-use
+  recovery codes.
+- **Roles:** checked on the server for every request, not just hidden in the
+  page.
+- **Pairing a new machine:**
+  - The code expires after 10 minutes and can't be guessed in time.
+  - Only an admin can approve it.
+  - The dashboard shows the machine's name, OS and request time next to the
+    code, so you can tell which machine you're approving.
+  - Pending requests are rate-limited.
+- **Upload keys:** one per machine, stored only as hashes and revocable one
+  at a time. The key decides which machine the data belongs to.
+- **Uploads:** every upload is checked against the expected format and size
+  before it's stored.
+- **The `*.workers.dev` address is turned off**, so the dashboard is only
+  reachable at your own subdomain.
+- **Browser protections:** strict security headers, including a content
+  security policy and a rule against embedding the dashboard in other sites.
 - **What leaves a machine:** day, model, the four token counts, estimated
-  cost, and agent and OS version. No prompts, file paths or project names.
-- **Upload checks:** every upload is checked against the expected format and
-  size before it's stored.
-- **Pinned ccusage:** the version is fixed and its checksum is verified, so
-  nothing is downloaded and run unattended.
+  cost, and program and OS version. No prompts, file paths or project names.
+- **Downloads:** every release, and every `ccunified update`, is checked
+  against the release's SHA-256 checksums.
 
 ---
 
-## 6. Steps
+## 8. Steps
 
 | # | Step | Who | Done when |
 |---|---|---|---|
-| 0 | Answer the open questions (§9) | you | answers given |
-| 1 | Set up the repo: layout, linting, test runners, CI on Linux, macOS and Windows | me | CI passes on the empty skeleton |
-| 2 | Payload schema and example payloads | me | the same examples pass in the Go and TypeScript tests |
-| 3 | Worker and D1: tables, enroll, upload, summary and machines endpoints, login checks | me | tests pass against a local D1 database running inside Cloudflare's runtime |
-| 4 | Agent core: config, running ccusage, building the upload, enroll/sync/status, retries | me | tests pass using fake Claude logs and the real ccusage program |
-| 5 | Scheduling and packaging: scheduler on 3 OSes, 6 builds, install scripts | me | CI installs, runs and removes the scheduled job on real Windows, macOS and Linux test machines |
-| 6 | Dashboard page | me | it shows the example data correctly; reviewed by screenshot |
-| 7 | Full local run: local Worker, real agent and a browser test | me | the agent's upload appears on the dashboard |
-| 8 | Deploy to your Cloudflare account: database, Worker, subdomain, Access login | you + me (runbook) | dashboard loads at your subdomain after login |
-| 9 | Install on each machine with the one-line command | you | every machine shows "last seen" under 30 minutes ago |
+| 0 | Decisions (§1) | you | ✅ done |
+| 1 | Repo skeleton, formatting and linting, test runners, CI on Linux and Windows test machines | me | CI passes |
+| 2 | Upload format schema and example payloads | me | the same examples pass the Go and TypeScript tests |
+| 3 | Worker core: tables and migrations, upload, summary, machines, settings | me | tests pass inside Cloudflare's runtime, run locally |
+| 4 | Worker login: users, roles, passwords, sessions, rate limiting, two-factor, machine pairing | me | login and permission tests pass, including attack cases |
+| 5 | Dashboard pages (§6.3) | me | every page works against test data; reviewed by screenshot |
+| 6 | Machine program core: config, ccusage runner, upload, retries, status | me | tests pass with fake Claude logs and the real ccusage |
+| 7 | Setup wizard: "create new dashboard" (Cloudflare API) and "join existing" (pairing); server update, reset-password and remove commands | me | wizard tests pass against a simulated Cloudflare API and a local Worker |
+| 8 | Background schedule, install, update and uninstall on Windows and Linux | me | CI installs, runs, updates and removes it on real Windows and Linux test machines |
+| 9 | Release pipeline: tag → GitHub Actions builds Windows and Linux packages (with pinned ccusage), checksums and install scripts | me | a test release installs correctly from GitHub on both OSes |
+| 10 | Full rehearsal: local Worker, real program, automated browser test of the whole flow | me | setup → pairing → sync → numbers on the dashboard, all automated |
+| 11 | First real setup on your Cloudflare account | you, with me fixing anything that breaks | dashboard live at your subdomain |
+| 12 | Join the rest of your machines | you | every machine reporting on time |
 
-- **Steps 1–7** can all be done in this cloud session. I can't run Windows or
-  macOS here, but GitHub Actions has Windows and macOS test machines, so CI
-  checks those for real.
-- **Steps 8–9** need your Cloudflare account and your machines.
-- Each step lands as its own commits on this branch, so you can review as it
-  goes.
-
-**Deploying (step 8).** Two options:
-
-- **Automatic (recommended):** create a Cloudflare API token limited to
-  Workers and D1, and save it as a GitHub secret. GitHub Actions then
-  deploys every time `main` changes.
-- **Manual:** run `npx wrangler login` and `npm run deploy` from your own
-  computer.
-
-Either way, the Access login is a one-time manual setup in the Cloudflare Zero
-Trust dashboard, about 5 minutes. `docs/` will have the exact clicks.
+- **Steps 1–10** I can do in this cloud session. GitHub's Windows test
+  machines cover the Windows-only parts.
+- **Real Cloudflare:** I can't use your Cloudflare account from here, so the
+  wizard is tested against a simulated Cloudflare API. Step 11 is the first
+  real run.
+- **Before step 11** the repository must be public, so the install commands
+  can download releases.
 
 ---
 
-## 7. Tools
+## 9. Tools
 
 | Area | Tool | Role |
 |---|---|---|
-| Agent | Go 1.24+ (standard library only) | One program per OS, nothing else to install |
-| Agent | ccusage 20.0.31 native programs (MIT) | Reads the Claude Code logs |
-| Cloudflare | Wrangler CLI | Deploy, database setup, running locally |
-| Cloudflare | Workers + Static Assets, D1, Access | Hosting, database, login |
+| Machine program | Go 1.24+ (standard library, plus a small library for terminal prompts) | Self-contained Windows and Linux programs |
+| Machine program | ccusage 20.0.31 native programs (MIT) | Reads Claude Code's logs |
+| Cloudflare | Workers, D1 | Hosting and database (free plan) |
+| Cloudflare | Cloudflare REST API | Used by the wizard to create everything; no Wrangler needed for users |
 | Worker | Hono | Small routing library made for Workers |
-| Worker | Zod | Checks incoming uploads |
-| Worker | jose | Verifies Cloudflare Access login tokens |
-| Dashboard | Vite | Builds the page |
+| Worker | Zod | Checks every incoming request |
+| Worker | Web Crypto (built into Workers) | Password hashing, tokens, two-factor codes |
+| Dashboard | Vite | Builds the pages (bundled into the Worker) |
 | Dashboard | Chart.js | Charts |
+| Development only | Wrangler | Runs the Worker locally for tests |
 | Tests | Vitest + `@cloudflare/vitest-pool-workers` | Worker tests inside the real Workers runtime |
-| Tests | `go test` | Agent tests |
-| Tests | Playwright | End-to-end browser check |
+| Tests | `go test` | Machine program tests |
+| Tests | Playwright | Automated browser test of the whole flow |
 | Quality | Biome (TypeScript), gofmt + go vet (Go) | Formatting and linting |
-| CI/CD | GitHub Actions | Tests on 3 OSes, builds, deploy |
-
-**What needs to be installed:**
-
-- **Your machines:** nothing beforehand. The one-line installer does it all,
-  with no admin rights.
-- **Your own computer:** nothing, if you use the automatic deploy.
+| CI and releases | GitHub Actions + GitHub Releases | Tests on Linux and Windows, builds, publishing |
 
 ---
 
-## 8. Cost
+## 10. Cost
 
-Everything fits Cloudflare's free plan.
+Everything should fit Cloudflare's free plan.
 
-- **Requests:** 10 machines syncing every 30 minutes is about 480 requests a
-  day. The free limit is 100,000.
-- **Storage:** a year of data for 10 machines with about 4 models each is
-  around 15,000 rows, a few MB. The free limit is 5 GB.
-
----
-
-## 9. Open questions (step 0)
-
-1. **Machines:** which OSes do they run, and are any ARM (e.g. Apple Silicon
-   Macs, Snapdragon PCs)? All six builds are planned either way; this decides
-   what gets tested first.
-2. **Address:** your domain, and the subdomain for the dashboard (e.g.
-   `usage.yourdomain.com`).
-3. **Timezone:** which timezone the dashboard's days should use.
-4. **What to track:** only Claude Code at first, or also other tools ccusage
-   reads (Codex, Gemini CLI, Copilot CLI and others)? Recommendation: Claude
-   Code first; adding others later is a small change.
-5. **Deploying:** automatic through GitHub Actions (recommended), or from
-   your own computer?
-6. **Access:** which email addresses may open the dashboard?
-
----
-
-## 10. Later (not in the first version)
-
-- **Account-wide 5-hour window view.** Plan limits apply to your whole
-  account, but each machine only sees its own usage. Combining ccusage's
-  5-hour block data from every machine would give a combined estimate.
-  Claude Code's `/usage` stays the authoritative number.
-- **Other AI coding tools**, using the `source` column.
-- **Agent self-update.**
-- **Sync right after each Claude Code session ends**, using a Claude Code hook.
-- **Alerts** (machine silent for a day, unusual spike) from a Worker on a timer.
-- **CSV export.**
+- **Requests:** 10 machines syncing every 15 minutes is under 1,000 requests
+  a day. The free limit is 100,000.
+- **Storage:** a year of data for 10 machines is about 15,000 rows, a few MB.
+  The free limit is 5 GB.
 
 ---
 
@@ -321,9 +404,27 @@ Everything fits Cloudflare's free plan.
 
 | Risk | Mitigation |
 |---|---|
-| A future ccusage changes its JSON output | Version is pinned; example-based tests catch it before we upgrade |
+| Password hashing may be too slow for the free plan's 10 ms CPU limit per request | Measured in step 4. If it's too slow, I'll come back to you with the options before choosing |
+| Cloudflare API token permissions or API behaviour differ from the docs | Step 11 is the real check. The wizard reports exactly which call failed and why |
+| A future ccusage changes its output | Version is pinned; example-based tests catch it before any upgrade |
 | Claude Code changes its log format | ccusage usually updates quickly; we raise the pin after tests pass |
-| Claude Code deletes local logs after 30 days by default | The first sync uploads everything; from then on the dashboard keeps the history |
-| Windows hidden scheduled task behaves differently on real hardware | Tested on GitHub's Windows test machines in CI before release |
-| Unsigned programs may trigger SmartScreen or Gatekeeper warnings | The installers download with PowerShell or curl, which normally don't trigger them; code signing is out of scope |
+| Windows Task Scheduler or Linux lingering behave differently on some machines | Tested on GitHub's Windows and Linux test machines; `ccunified status` shows whether the schedule is healthy |
+| Unsigned programs may trigger a SmartScreen warning | The installers download with PowerShell or curl, which normally don't trigger it; code signing costs money and is out of scope |
 | Cost figures get mistaken for real charges | Labelled "API-price estimate"; subscriptions aren't billed per token |
+
+---
+
+## 12. Later (not in the first version)
+
+- **macOS support:** a launchd schedule plus macOS builds.
+- **Other AI coding tools** (Codex, Gemini CLI and others), using the
+  `source` column.
+- **Account-wide 5-hour window view:** combine ccusage's 5-hour block data
+  from every machine for an estimate. Claude Code's `/usage` stays the
+  authoritative number.
+- **Sync right after each Claude Code session ends**, using a Claude Code
+  hook.
+- **Alerts** (machine silent too long, unusual spike).
+- **CSV export.**
+- **Signed releases**, for stronger protection if the GitHub account were
+  ever compromised.
