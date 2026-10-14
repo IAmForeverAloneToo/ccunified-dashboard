@@ -15,11 +15,15 @@
     "format": "biome check --write .",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm test --workspaces",
-    "build": "npm run build -w dashboard && npm run build -w worker"
+    "build": "npm run build -w dashboard && npm run build -w worker",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:agent",
+    "check:agent": "cd agent && test -z \"$(gofmt -l .)\" && go vet ./... && go test ./...",
+    "demo": "npm run build -w dashboard && node worker/scripts/demo.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@playwright/test": "1.64.0"
   },
   "packageManager": "npm@12.2.0",
   "allowScripts": {

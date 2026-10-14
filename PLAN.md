@@ -393,11 +393,11 @@ usage_daily       (machine_id, source, day, model,
 | Worker | Web Crypto (built into Workers) | Password hashing, tokens, two-factor codes |
 | Dashboard | Vite | Builds the pages (bundled into the Worker) |
 | Development only | Node.js 24 LTS + npm 12 | Builds and tests the Worker and dashboard; never needed on your machines |
-| Dashboard | Chart.js | Charts |
+| Dashboard | Hand-drawn SVG charts (no chart library) and uqr for QR codes | Exact control of chart style and accessibility; works with the strict security policy |
 | Development only | Wrangler | Runs the Worker locally for tests |
 | Tests | Vitest + Miniflare | Worker tests inside workerd, Cloudflare's real runtime, against a real D1 database. Cloudflare's Vitest plugin doesn't support the latest Vitest yet, so Miniflare is used directly |
 | Tests | `go test` | Machine program tests |
-| Tests | Playwright | Automated browser test of the whole flow |
+| Tests | Playwright + Google Chrome (latest stable) | Automated browser tests of the dashboard and the whole flow |
 | Quality | Biome (TypeScript), gofmt + go vet (Go) | Formatting and linting |
 | CI and releases | GitHub Actions + GitHub Releases | Tests on Linux and Windows, builds, publishing |
 

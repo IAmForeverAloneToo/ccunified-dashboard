@@ -165,7 +165,16 @@ describe("summary", () => {
     expect(body.timezone).toBe("UTC");
   });
 
+  test("days=N means the last N days ending today", async () => {
+    const res = await w.fetch("/api/summary?days=7", { cookie: viewer.cookie });
+    const body = (await res.json()) as { from: string; to: string; today: string };
+    expect(body.to).toBe(body.today);
+    expect((Date.parse(body.to) - Date.parse(body.from)) / 86_400_000).toBe(6);
+  });
+
   test.each([
+    ["days=0", 400],
+    ["days=abc", 400],
     ["from=2026-10-10&to=2026-10-01", 400],
     ["from=yesterday", 400],
     ["from=2000-01-01&to=2026-01-01", 400],
@@ -228,7 +237,11 @@ describe("machines", () => {
 describe("settings", () => {
   test("viewers can read settings", async () => {
     const res = await w.fetch("/api/settings", { cookie: viewer.cookie });
-    expect(await res.json()).toMatchObject({ timezone: "UTC", server_version: "test" });
+    expect(await res.json()).toMatchObject({
+      timezone: "UTC",
+      server_version: "test",
+      source_repo: "IAmForeverAloneToo/ccunified-dashboard",
+    });
   });
 
   test("admins can change the time zone; machines must then re-upload", async () => {

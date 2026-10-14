@@ -5,7 +5,7 @@ import { fail, readJson } from "../lib/http";
 import { getSettings, setSetting } from "../lib/settings";
 import { isValidTimezone } from "../lib/time";
 import { latestVersion } from "../lib/updates";
-import { SERVER_VERSION } from "../version";
+import { SERVER_VERSION, SOURCE_REPO } from "../version";
 
 /** GET /api/settings */
 export async function readSettings(c: Context<AppEnv>): Promise<Response> {
@@ -14,6 +14,7 @@ export async function readSettings(c: Context<AppEnv>): Promise<Response> {
     timezone: settings.timezone,
     server_version: SERVER_VERSION,
     latest_version: latestVersion(c.env.DB, settings, c.executionCtx),
+    source_repo: SOURCE_REPO,
   });
 }
 

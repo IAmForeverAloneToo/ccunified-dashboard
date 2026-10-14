@@ -10,6 +10,8 @@ const MAX_SPAN_DAYS = 3660;
 const Query = z.object({
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
+  /** Last N days ending today (in the dashboard's time zone); ignored if `from` is given. */
+  days: z.coerce.number().int().min(1).max(MAX_SPAN_DAYS).optional(),
 });
 
 interface Totals {
@@ -45,20 +47,22 @@ function add(into: Totals, row: Totals): void {
 }
 
 /**
- * GET /api/summary?from=YYYY-MM-DD&to=YYYY-MM-DD — usage per day, split by
- * machine and (separately) by model. Defaults to the last 30 days.
+ * GET /api/summary?from=YYYY-MM-DD&to=YYYY-MM-DD (or ?days=N) — usage per
+ * day, split by machine and (separately) by model. Defaults to the last 30 days.
  *
  * Responds 304 when the dashboard already has the current data (ETag), which
  * keeps D1 reads tiny while a dashboard polls.
  */
 export async function summary(c: Context<AppEnv>): Promise<Response> {
   const query = Query.safeParse(c.req.query());
-  if (!query.success) fail(400, "invalid_request", { message: "from/to must be YYYY-MM-DD" });
+  if (!query.success) {
+    fail(400, "invalid_request", { message: "from/to must be YYYY-MM-DD; days 1-3660" });
+  }
 
   const settings = await getSettings(c.env.DB);
   const today = todayIn(settings.timezone);
   const to = query.data.to ?? today;
-  const from = query.data.from ?? addDays(to, -29);
+  const from = query.data.from ?? addDays(to, -((query.data.days ?? 30) - 1));
   if (from > to) fail(400, "invalid_request", { message: "from must not be after to" });
   if (daysBetween(from, to) > MAX_SPAN_DAYS) {
     fail(400, "invalid_request", { message: `at most ${MAX_SPAN_DAYS} days` });
