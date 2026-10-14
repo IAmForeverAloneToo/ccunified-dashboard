@@ -16,3 +16,4 @@ agent/internal/ccusage/bin/
 # Go build output
 agent/bin/
 /out/
+/dist/

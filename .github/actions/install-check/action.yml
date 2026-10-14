@@ -1,0 +1,74 @@
+name: Install, check and uninstall
+description: >
+  Installs ccunified with the one-line installer the way users do, checks the
+  installed files and version, then uninstalls it and checks nothing is left.
+
+inputs:
+  base:
+    description: Where the release files are downloaded from
+    required: true
+  version:
+    description: The version the installed program must report
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install, check and uninstall (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        curl -fsSL "$BASE/install.sh" | CCUNIFIED_DOWNLOAD_BASE="$BASE" CCUNIFIED_NO_SETUP=1 sh
+        dir="$HOME/.local/share/ccunified"
+        for f in ccunified ccusage LICENSE THIRD_PARTY_NOTICES.txt; do
+          test -f "$dir/$f" || { echo "missing $f"; exit 1; }
+        done
+        test -x "$dir/ccunified" && test -x "$dir/ccusage"
+        test ! -x "$dir/LICENSE"
+        "$HOME/.local/bin/ccunified" version | tee version.txt
+        grep -q "^ccunified $VERSION " version.txt
+        "$HOME/.local/bin/ccunified" status
+        "$HOME/.local/bin/ccunified" uninstall --yes
+        test ! -e "$dir"
+        test ! -e "$HOME/.local/bin/ccunified"
+
+    # Windows PowerShell 5.1 is what every Windows machine has, so the
+    # installer runs there; the checks afterwards use PowerShell 7.
+    - name: Install the way users do (Windows PowerShell 5.1)
+      if: runner.os == 'Windows'
+      shell: powershell
+      env:
+        BASE: ${{ inputs.base }}
+      run: |
+        $env:CCUNIFIED_DOWNLOAD_BASE = $env:BASE
+        $env:CCUNIFIED_NO_SETUP = '1'
+        irm "$env:BASE/install.ps1" | iex
+
+    - name: Check the install, then uninstall (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        $dir = Join-Path $env:LOCALAPPDATA 'Programs\ccunified'
+        foreach ($f in 'ccunified.exe','ccunifiedw.exe','ccusage.exe','LICENSE','THIRD_PARTY_NOTICES.txt') {
+          if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
+        }
+        $version = & (Join-Path $dir 'ccunified.exe') version
+        Write-Host $version
+        if ($version -notlike "ccunified $env:VERSION *") { throw "unexpected version: $version" }
+        $userPath = (Get-ItemProperty HKCU:\Environment).Path
+        if (-not (($userPath -split ';') -contains $dir)) { throw "install folder not on the user PATH: $userPath" }
+        & (Join-Path $dir 'ccunified.exe') status
+        if ($LASTEXITCODE -ne 0) { throw "status failed" }
+        & (Join-Path $dir 'ccunified.exe') uninstall --yes
+        if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+        # The install folder is removed by a helper after the program exits.
+        for ($i = 0; $i -lt 30 -and (Test-Path $dir); $i++) { Start-Sleep -Seconds 1 }
+        if (Test-Path $dir) { throw "install folder still exists" }
+        $userPath = (Get-ItemProperty HKCU:\Environment).Path
+        if (($userPath -split ';') -contains $dir) { throw "install folder still on the user PATH" }

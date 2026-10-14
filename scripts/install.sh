@@ -63,7 +63,10 @@ for f in "$tmp/x"/*; do
 	name="$(basename "$f")"
 	# Move into place (works even while an old copy is running).
 	cp "$f" "$dir/.$name.new"
-	chmod 755 "$dir/.$name.new"
+	case "$name" in
+	ccunified | ccusage) chmod 755 "$dir/.$name.new" ;;
+	*) chmod 644 "$dir/.$name.new" ;;
+	esac
 	mv -f "$dir/.$name.new" "$dir/$name"
 done
 ln -sf "$dir/ccunified" "$bindir/ccunified"

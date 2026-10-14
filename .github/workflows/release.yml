@@ -1,0 +1,141 @@
+name: Release
+
+# Every push to Main builds the release files and installs them for real on
+# Windows and Linux. Pushing a version tag (v1.2.3) also publishes them as a
+# GitHub release, which is where the one-line installers download from.
+on:
+  push:
+    branches: [Main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release files
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          check-latest: true
+      - run: npm install -g "$(node -p "require('./package.json').packageManager")"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - id: version
+        name: Work out the version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            v="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: Full check (tags only; Main is checked by the CI workflow)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm run check
+      - name: Build the dashboard into the program
+        run: npm run build:assets
+        env:
+          CCUNIFIED_VERSION: ${{ steps.version.outputs.version }}
+          CCUNIFIED_REPO: ${{ github.repository }}
+      - name: Build archives, installers and checksums
+        working-directory: agent
+        run: go run ./tools/release -version "${{ steps.version.outputs.version }}" -repo "${{ github.repository }}" -out ../dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  smoke:
+    name: Install for real (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+      - name: Serve the release files locally (Linux)
+        if: runner.os == 'Linux'
+        run: (cd dist && python3 -m http.server 8811 --bind 127.0.0.1 >/dev/null 2>&1 &)
+      - name: Serve the release files locally (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Start-Process -FilePath python -ArgumentList '-m','http.server','8811','--bind','127.0.0.1' -WorkingDirectory dist -WindowStyle Hidden
+      - name: Wait for the local download server
+        shell: bash
+        run: |
+          for _ in $(seq 1 20); do
+            curl -fsS -o /dev/null http://127.0.0.1:8811/checksums.txt && exit 0
+            sleep 1
+          done
+          echo "the local download server didn't start"; exit 1
+      - uses: ./.github/actions/install-check
+        with:
+          base: http://127.0.0.1:8811
+          version: ${{ needs.build.outputs.version }}
+
+  publish:
+    name: Publish GitHub release
+    needs: [build, smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+      # A version with a suffix (1.2.0-rc.1) is a pre-release: the installers'
+      # latest/download links and `ccunified update` never pick it up.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          pre=()
+          [[ "$VERSION" == *-* ]] && pre=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ccunified $VERSION" \
+            --generate-notes \
+            --verify-tag \
+            "${pre[@]}"
+
+  verify:
+    name: Install from the GitHub release (${{ matrix.os }})
+    needs: [build, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/install-check
+        with:
+          base: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          version: ${{ needs.build.outputs.version }}
