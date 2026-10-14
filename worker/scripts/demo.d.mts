@@ -10,4 +10,6 @@ export function startDemo(options?: {
   mf: Miniflare;
   url: string;
   db: Awaited<ReturnType<Miniflare["getD1Database"]>>;
+  /** The stand-in GitHub: the newest release it reports, and whether it answers. */
+  github: { latest: string; reachable: boolean };
 }>;

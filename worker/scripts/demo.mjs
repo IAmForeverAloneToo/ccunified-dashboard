@@ -32,6 +32,31 @@ function loginKey(installId, username, password) {
   return pbkdf2Sync(Buffer.from(password.normalize("NFC")), salt, 600_000, 32, "sha256");
 }
 
+const DEMO_VERSION = "0.1.0-demo";
+
+/**
+ * A stand-in for GitHub, so the demo never contacts it. By default the demo's
+ * own version is the newest release; tests change `latest` and `reachable`.
+ */
+function fakeGitHub(github) {
+  return (request) => {
+    const url = new URL(request.url);
+    if (!github.reachable) return new Response("unavailable", { status: 503 });
+    if (url.hostname === "api.github.com" && url.pathname.endsWith("/releases/latest")) {
+      return Response.json({ tag_name: `v${github.latest}` });
+    }
+    if (url.hostname === "github.com" && url.pathname.endsWith("/releases/latest")) {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: `https://github.com${url.pathname.replace(/latest$/, `tag/v${github.latest}`)}`,
+        },
+      });
+    }
+    return new Response("not part of the demo", { status: 404 });
+  };
+}
+
 function serverHash(key) {
   const salt = randomBytes(16);
   const hash = pbkdf2Sync(key, salt, 5000, 32, "sha256");
@@ -39,6 +64,7 @@ function serverHash(key) {
 }
 
 export async function startDemo({ port: listenPort = port, seed = true, quiet = false } = {}) {
+  const github = { latest: DEMO_VERSION, reachable: true };
   const mf = new Miniflare({
     host: "127.0.0.1",
     port: listenPort,
@@ -52,12 +78,13 @@ export async function startDemo({ port: listenPort = port, seed = true, quiet = 
             modules: {
               "worker.js": {
                 type: "esm",
-                contents: await bundleWorker({ version: "0.1.0-demo", requireDashboard: true }),
+                contents: await bundleWorker({ version: DEMO_VERSION, requireDashboard: true }),
               },
             },
           },
           env: { DB: { type: "d1", id: `demo-${randomUUID()}` } },
         },
+        dev: { outboundService: { type: "fetcher", handler: fakeGitHub(github) } },
       },
     ],
   });
@@ -76,7 +103,7 @@ export async function startDemo({ port: listenPort = port, seed = true, quiet = 
     console.log(`ccunified demo running at ${url}`);
     console.log('Log in as "demo" with password "demo-password". Ctrl+C to stop.');
   }
-  return { mf, url: String(url), db };
+  return { mf, url: String(url), db, github };
 }
 
 async function seedDemo(db) {
@@ -180,7 +207,7 @@ async function seedDemo(db) {
         id,
         m.name,
         m.os,
-        m.version ?? "0.1.0-demo",
+        m.version ?? DEMO_VERSION,
         m.interval,
         sha256(randomUUID()),
         now - m.created * 864e5,

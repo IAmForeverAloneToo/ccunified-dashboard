@@ -3,6 +3,11 @@ export interface Settings {
   dataVersion: number;
   latestVersion: string | null;
   latestCheckedAt: number | null;
+  /**
+   * Why the last check for a new release failed: "" if it worked, null if no
+   * check has recorded its outcome yet (none since ccunified 0.2).
+   */
+  latestCheckError: string | null;
   /** Every tool the dashboard has seen, in the order they first appeared. */
   tools: string[];
 }
@@ -19,6 +24,7 @@ export async function getSettings(db: D1Database): Promise<Settings> {
     dataVersion: Number(map.get("data_version") ?? "0"),
     latestVersion: map.get("latest_version") ?? null,
     latestCheckedAt: checked ? Number(checked) : null,
+    latestCheckError: map.get("latest_check_error") ?? null,
     tools: parseList(map.get("tools")),
   };
 }

@@ -25,7 +25,8 @@ Besides your dashboard, a machine contacts GitHub (for `ccunified update` and
 installs) and Cloudflare's public DNS (only when its own DNS can't find the
 dashboard). ccusage downloads current model prices; if that fails, it uses the
 prices built into it. The dashboard itself asks GitHub for the newest
-ccunified release every 6 hours, sending nothing but its own version.
+ccunified release every 6 hours, and when someone clicks **Check for
+updates**, sending nothing but its own version.
 
 ## Where your data is stored
 

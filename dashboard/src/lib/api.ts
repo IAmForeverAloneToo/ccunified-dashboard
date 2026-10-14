@@ -152,5 +152,9 @@ export interface SettingsResponse {
   timezone: string;
   server_version: string;
   latest_version: string | null;
+  /** When the dashboard last asked GitHub for the newest release (null: not yet). */
+  latest_checked_at: number | null;
+  /** Why that check failed; null if it worked. */
+  latest_check_error: string | null;
   source_repo: string;
 }

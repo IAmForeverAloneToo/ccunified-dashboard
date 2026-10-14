@@ -106,9 +106,9 @@ The background sync runs `ccunified sync --quiet` on schedule:
    aren't rewritten, so sending the same day again never counts it twice and
    costs almost no database writes.
 6. **The reply** carries the dashboard's time zone, the upload formats it
-   accepts and the newest released version. The dashboard asks GitHub for
-   that every 6 hours, and learns it sooner when a machine uploads with a
-   newer release than it knows of. If the machine used an outdated time zone,
+   accepts and the newest released version (see
+   [Checking for updates](#checking-for-updates)). If the machine used an
+   outdated time zone,
    the Worker refuses the upload (`409 timezone_mismatch`); the machine
    switches to the new zone and uploads its whole history again.
 7. Failed uploads are retried up to 6 times, waiting 1, 2, 4, 8 and 16 seconds
@@ -138,6 +138,17 @@ ccunified 0.1 accepts format 1 only, so the machine uploads Claude Code's
 usage and `ccunified status` suggests `ccunified server update`. As soon as a
 reply says the dashboard accepts format 2, the machine uploads its whole
 history again, with every tool, in the same sync.
+
+### Checking for updates
+
+The dashboard asks GitHub for the newest release (pre-releases don't count)
+at most every 6 hours, in the background of a request once the last check
+is older than that, and right away when someone clicks **Check for updates**
+on the Settings page. It asks GitHub's API first and, if that fails (the API
+limits addresses that many sites share, such as Cloudflare's), the
+`releases/latest` page, which redirects to the newest release. It records
+when it asked and, if neither answered, why; Settings shows both. It also
+learns of a release as soon as a machine uploads while running it.
 
 ### The background schedule
 
@@ -173,7 +184,8 @@ history again, with every tool, in the same sync.
 | `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
 | `GET /api/pairing`, `POST /api/pairing/approve`, `POST /api/pairing/deny` | Machines waiting to join | admin |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users | admin |
-| `GET /api/settings` / `PATCH /api/settings` | Read / change the time zone | viewer / admin |
+| `GET /api/settings` / `PATCH /api/settings` | Read the settings and update status / change the time zone | viewer / admin |
+| `POST /api/settings/check-updates` | Ask GitHub for the newest release now | viewer |
 
 `GET /healthz` answers `{"ok":true,"version":"…","schema_versions":[1,2]}`
 without a login. Every other path serves the dashboard's pages.

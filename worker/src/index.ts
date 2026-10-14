@@ -5,7 +5,7 @@ import { ingest } from "./agent/ingest";
 import { pollPairing, startPairing } from "./agent/pair";
 import { listMachines, renameMachine, revokeMachine } from "./api/machines";
 import { approvePairing, denyPairing, listPairing } from "./api/pairing";
-import { readSettings, updateSettings } from "./api/settings";
+import { checkForUpdates, readSettings, updateSettings } from "./api/settings";
 import { summary, usageDays } from "./api/summary";
 import { createUser, deleteUser, listUsers, updateUser } from "./api/users";
 import { serveAsset } from "./assets";
@@ -80,6 +80,7 @@ api.delete("/users/:id", requireUser("admin"), deleteUser);
 
 api.get("/settings", requireUser(), readSettings);
 api.patch("/settings", requireUser("admin"), updateSettings);
+api.post("/settings/check-updates", requireUser(), checkForUpdates);
 
 app.route("/api", api);
 

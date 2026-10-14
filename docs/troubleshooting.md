@@ -154,7 +154,15 @@ ran `ccunified server update` on a machine with an older ccunified. Run
 
 **A new release isn't shown as available yet.** The dashboard checks GitHub
 for new releases every 6 hours, and also learns about one as soon as any of
-your machines uploads with it.
+your machines uploads with it. To check right away, click **Check for
+updates** on the Settings page.
+
+**"Couldn't check for updates"** on the Settings page: the dashboard couldn't
+get an answer from GitHub, for the reason shown. GitHub's API limits how
+many requests each internet address may make, and Cloudflare's addresses are
+shared by many sites; when the API refuses, the dashboard asks GitHub's
+releases page instead, so this is usually brief. Try again later; the
+dashboard also tries again on its own every 6 hours.
 
 ## Numbers look different from elsewhere
 

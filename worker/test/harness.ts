@@ -59,9 +59,24 @@ export interface TestWorker {
   dispose(): Promise<void>;
 }
 
-/** Starts the bundled Worker in workerd (Cloudflare's runtime) with a fresh, migrated D1 database. */
-export async function startWorker(): Promise<TestWorker> {
-  bundled ??= bundleWorker({ version: "test" });
+/**
+ * Starts the bundled Worker in workerd (Cloudflare's runtime) with a fresh,
+ * migrated D1 database. `outbound` answers every request the Worker makes to
+ * other sites (such as GitHub); without it, those requests fail.
+ */
+export async function startWorker(
+  options: { version?: string; outbound?: (request: Request) => Response | Promise<Response> } = {},
+): Promise<TestWorker> {
+  const version = options.version ?? "test";
+  let build: Promise<string>;
+  if (version === "test") {
+    bundled ??= bundleWorker({ version });
+    build = bundled;
+  } else {
+    build = bundleWorker({ version });
+  }
+  const contents = await build;
+  const outbound = options.outbound ?? (() => new Response("no network in tests", { status: 502 }));
   const mf = new Miniflare({
     workers: [
       {
@@ -70,9 +85,15 @@ export async function startWorker(): Promise<TestWorker> {
           compatibilityDate: "2026-10-01",
           manifest: {
             mainModule: "worker.js",
-            modules: { "worker.js": { type: "esm", contents: await bundled } },
+            modules: { "worker.js": { type: "esm", contents } },
           },
           env: { DB: { type: "d1", id: `test-${randomUUID()}` } },
+        },
+        dev: {
+          outboundService: {
+            type: "fetcher",
+            handler: (request) => outbound(request as unknown as Request) as never,
+          },
         },
       },
     ],

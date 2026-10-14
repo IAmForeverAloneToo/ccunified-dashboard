@@ -479,7 +479,8 @@ button.link {
   font-weight: 500;
 }
 
-button:disabled {
+button:disabled,
+button[aria-disabled="true"] {
   opacity: 0.55;
   cursor: progress;
 }

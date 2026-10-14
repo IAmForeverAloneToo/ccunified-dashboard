@@ -356,3 +356,51 @@ test.describe("tools other than Claude Code", () => {
     await expect(page.getByRole("columnheader", { name: "Tools" })).toBeVisible();
   });
 });
+
+test("Settings checks for updates on request and says when GitHub couldn't be reached", async ({
+  page,
+}) => {
+  await logIn(page);
+  await page.getByRole("link", { name: "Settings" }).click();
+  const card = page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "Version" }) });
+  const status = card.getByRole("status");
+  const check = card.getByRole("button", { name: "Check for updates" });
+
+  try {
+    await check.click();
+    await expect(status).toContainText("It's up to date.");
+    await expect(status).toContainText("Last checked just now.");
+
+    demo.github.reachable = false;
+    await check.click();
+    await expect(status).toContainText(
+      "Couldn't check for updates: GitHub answered with an error (HTTP 503).",
+    );
+    await expect(status).toContainText("Last tried just now.");
+    await expect(status).not.toContainText("up to date");
+    await expect(check).not.toHaveAttribute("aria-disabled");
+    await expect(check).toBeFocused(); // the result is announced; focus stays put
+
+    demo.github.reachable = true;
+    demo.github.latest = "9.9.9";
+    await check.click();
+    await expect(status).toContainText("Version 9.9.9 is available.");
+    await expect(status).toContainText("Last checked just now.");
+    await test
+      .info()
+      .attach("settings", { body: await card.screenshot(), contentType: "image/png" });
+
+    // The result is kept: a reload shows it without asking GitHub again.
+    demo.github.reachable = false;
+    await page.reload();
+    await expect(status).toContainText("Version 9.9.9 is available.");
+    await expect(status).not.toContainText("Couldn't check");
+  } finally {
+    demo.github.reachable = true;
+    demo.github.latest = "0.1.0-demo";
+    await check.click();
+    await expect(status).toContainText("It's up to date.");
+  }
+});

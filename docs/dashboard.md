@@ -157,5 +157,8 @@ run `ccunified server reset-password` on any of your machines; see the
   the new zone's days: each machine notices on its next upload and uploads its
   history again, grouped the new way. Days older than the logs still on a
   machine keep their old grouping.
-- **Version:** the ccunified version the dashboard runs and whether a newer
-  release exists. See [Updating](commands.md#updating).
+- **Version:** the ccunified version the dashboard runs, whether a newer
+  release exists, and when the dashboard last asked GitHub. It asks on its
+  own every 6 hours; **Check for updates** asks right away. If GitHub can't
+  be reached, the page says *Couldn't check for updates* and why, rather than
+  that the dashboard is up to date. See [Updating](commands.md#updating).

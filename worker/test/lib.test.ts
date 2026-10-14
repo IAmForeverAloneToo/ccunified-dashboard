@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { fetchLatestRelease } from "../src/lib/releases";
 import { compareVersions } from "../src/lib/semver";
 import { addDays, daysBetween, isValidTimezone, todayIn } from "../src/lib/time";
 
@@ -43,5 +44,26 @@ describe("time helpers", () => {
     expect(isValidTimezone("UTC")).toBe(true);
     expect(isValidTimezone("Mars/Olympus_Mons")).toBe(false);
     expect(isValidTimezone("")).toBe(false);
+  });
+});
+
+describe("fetchLatestRelease", () => {
+  const offline = (() => Promise.reject(new TypeError("fetch failed"))) as unknown as typeof fetch;
+
+  test("says GitHub couldn't be reached when the network fails", async () => {
+    expect(await fetchLatestRelease(offline)).toEqual({ error: "GitHub couldn't be reached" });
+  });
+
+  test("tries the releases page when the API can't be reached", async () => {
+    const pageOnly = ((url: string) =>
+      url.startsWith("https://api.github.com/")
+        ? Promise.reject(new TypeError("fetch failed"))
+        : Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://github.com/o/r/releases/tag/v1.2.3" },
+            }),
+          )) as unknown as typeof fetch;
+    expect(await fetchLatestRelease(pageOnly)).toEqual({ version: "1.2.3" });
   });
 });

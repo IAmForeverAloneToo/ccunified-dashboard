@@ -1,5 +1,6 @@
 import { api, type SettingsResponse } from "../lib/api";
-import { confirmDialog, h, toast } from "../lib/dom";
+import { confirmDialog, fill, h, toast } from "../lib/dom";
+import { dateTime, relativeTime } from "../lib/format";
 import type { PageContext } from "../main";
 
 function timezones(current: string): string[] {
@@ -61,8 +62,72 @@ export async function settingsPage(ctx: PageContext) {
     toast("Time zone changed");
   });
 
-  const upToDate =
-    settings.latest_version === null || settings.latest_version === settings.server_version;
+  // Whether there's a newer release, and when GitHub was last asked.
+  const updateStatus = h("div", { class: "stack", role: "status" });
+  const checkButton = h("button", { type: "button", class: "small" }, "Check for updates");
+  function paintUpdates(s: SettingsResponse) {
+    const newer = s.latest_version !== null && s.latest_version !== s.server_version;
+    const when = (verb: string) =>
+      s.latest_checked_at === null
+        ? null
+        : h(
+            "p",
+            { class: "small muted", title: dateTime(s.latest_checked_at) },
+            `${verb} ${relativeTime(s.latest_checked_at)}.`,
+          );
+    fill(
+      updateStatus,
+      newer
+        ? h(
+            "div",
+            { class: "banner info" },
+            h("span", { class: "icon", "aria-hidden": "true" }, "●"),
+            h(
+              "span",
+              null,
+              `Version ${s.latest_version} is available. To update the dashboard, run `,
+              h("code", null, "ccunified update"),
+              " on one of your machines, then ",
+              h("code", null, "ccunified server update"),
+              " on that machine. Machines that aren't up to date yet are marked on the Machines page.",
+            ),
+          )
+        : s.latest_check_error !== null
+          ? h(
+              "div",
+              { class: "banner warning" },
+              h("span", { class: "icon", "aria-hidden": "true" }, "▲"),
+              h("span", null, `Couldn't check for updates: ${s.latest_check_error}.`),
+            )
+          : s.latest_checked_at !== null
+            ? h("p", { class: "secondary" }, "It's up to date.")
+            : h("p", { class: "secondary" }, "It hasn't checked for updates yet."),
+      s.latest_check_error === null
+        ? when("Last checked")
+        : newer
+          ? when(`Couldn't check for updates (${s.latest_check_error}). Last tried`)
+          : when("Last tried"),
+    );
+  }
+  paintUpdates(settings);
+  // aria-disabled rather than disabled: a disabled button loses keyboard focus.
+  let checking = false;
+  checkButton.addEventListener("click", async () => {
+    if (checking) return;
+    checking = true;
+    checkButton.setAttribute("aria-disabled", "true");
+    checkButton.textContent = "Checking…";
+    try {
+      paintUpdates(await api<SettingsResponse>("/settings/check-updates", { method: "POST" }));
+    } catch {
+      toast("Couldn't reach the dashboard. Try again.");
+    } finally {
+      checking = false;
+      checkButton.removeAttribute("aria-disabled");
+      checkButton.textContent = "Check for updates";
+    }
+  });
+
   ctx.main.append(
     h("div", { class: "page-head" }, h("div", null, h("h1", null, "Settings"))),
     h(
@@ -82,22 +147,8 @@ export async function settingsPage(ctx: PageContext) {
         h("strong", null, settings.server_version),
         ".",
       ),
-      upToDate
-        ? h("p", { class: "secondary" }, "It's up to date.")
-        : h(
-            "div",
-            { class: "banner info" },
-            h("span", { class: "icon", "aria-hidden": "true" }, "●"),
-            h(
-              "span",
-              null,
-              `Version ${settings.latest_version} is available. To update the dashboard, run `,
-              h("code", null, "ccunified update"),
-              " on one of your machines, then ",
-              h("code", null, "ccunified server update"),
-              " on that machine. Machines that aren't up to date yet are marked on the Machines page.",
-            ),
-          ),
+      updateStatus,
+      h("div", { class: "row" }, checkButton),
       h(
         "p",
         { class: "small muted" },

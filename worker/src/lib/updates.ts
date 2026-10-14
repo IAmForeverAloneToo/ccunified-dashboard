@@ -1,4 +1,5 @@
-import { SERVER_VERSION, SOURCE_REPO } from "../version";
+import { SERVER_VERSION } from "../version";
+import { fetchLatestRelease } from "./releases";
 import { compareVersions } from "./semver";
 import { type Settings, setSetting } from "./settings";
 
@@ -15,7 +16,9 @@ export function latestVersion(
   fetcher: typeof fetch = fetch,
 ): string | null {
   const isRelease = compareVersions(SERVER_VERSION, SERVER_VERSION) !== undefined;
-  const stale = (settings.latestCheckedAt ?? 0) < Date.now() - CHECK_EVERY_MS;
+  const stale =
+    (settings.latestCheckedAt ?? 0) < Date.now() - CHECK_EVERY_MS ||
+    settings.latestCheckError === null;
   if (isRelease && stale) ctx.waitUntil(refreshLatestVersion(db, fetcher));
   return pickLatest(settings.latestVersion, SERVER_VERSION);
 }
@@ -30,31 +33,18 @@ export function pickLatest(...versions: (string | null)[]): string | null {
   return best;
 }
 
+/** Checks GitHub for a new release now, and records the outcome. */
 export async function refreshLatestVersion(
   db: D1Database,
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
   const now = String(Date.now());
-  let found: string | null = null;
-  try {
-    const res = await fetcher(`https://api.github.com/repos/${SOURCE_REPO}/releases/latest`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        "user-agent": `ccunified/${SERVER_VERSION}`,
-      },
-    });
-    if (res.ok) {
-      const body = (await res.json()) as { tag_name?: unknown };
-      if (typeof body.tag_name === "string") {
-        const tag = body.tag_name.replace(/^v/, "");
-        if (compareVersions(tag, tag) !== undefined) found = tag;
-      }
-    }
-  } catch {
-    // Offline or rate-limited: try again after the next interval.
-  }
-  const writes = [setSetting(db, "latest_checked_at", now)];
-  if (found) writes.push(setSetting(db, "latest_version", found));
+  const result = await fetchLatestRelease(fetcher);
+  const writes = [
+    setSetting(db, "latest_checked_at", now),
+    setSetting(db, "latest_check_error", "error" in result ? result.error : ""),
+  ];
+  if ("version" in result) writes.push(setSetting(db, "latest_version", result.version));
   await db.batch(writes);
 }
 
