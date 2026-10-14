@@ -16,6 +16,8 @@
   --accent: #2a78d6;
   --accent-ink: #ffffff;
   --accent-text: #1c5cab;
+  --range: color-mix(in srgb, var(--accent) 15%, transparent);
+  --range-preview: color-mix(in srgb, var(--accent) 8%, transparent);
   --focus: #2a78d6;
   --good: #0ca30c;
   --good-text: #006300;
@@ -56,6 +58,8 @@
     --accent: #3987e5;
     --accent-ink: #ffffff;
     --accent-text: #86b6ef;
+    --range: color-mix(in srgb, var(--accent) 32%, transparent);
+    --range-preview: color-mix(in srgb, var(--accent) 18%, transparent);
     --focus: #6da7ec;
     --good-text: #0ca30c;
     --warning-text: #fab219;
@@ -87,6 +91,8 @@
   --accent: #3987e5;
   --accent-ink: #ffffff;
   --accent-text: #86b6ef;
+  --range: color-mix(in srgb, var(--accent) 32%, transparent);
+  --range-preview: color-mix(in srgb, var(--accent) 18%, transparent);
   --focus: #6da7ec;
   --good-text: #0ca30c;
   --warning-text: #fab219;
@@ -553,6 +559,27 @@ button.small {
 .filter-label {
   font-size: 0.85rem;
   color: var(--ink-2);
+}
+
+/* The custom period button next to the Period presets */
+.range-button {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink-2);
+  border-radius: 9px;
+  padding: 5px 12px;
+  min-height: 0;
+  height: 34px;
+}
+
+.range-button.active {
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.range-button svg {
+  flex: none;
 }
 
 /* ---------- Stat tiles ---------- */
@@ -1032,5 +1059,319 @@ dialog::backdrop {
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation-duration: 2.4s;
+  }
+}
+
+/* ---------- Date range picker ---------- */
+
+.drp {
+  /* A popover: positioned under its button by script, or as a sheet on phones. */
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  display: none;
+  gap: 14px;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+.drp:popover-open {
+  display: grid;
+}
+
+.drp-fields {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.drp-field {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.drp-field input {
+  width: 9.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.drp-dash {
+  padding-bottom: 9px;
+  color: var(--muted);
+}
+
+.drp-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.drp-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 118px;
+}
+
+.drp-presets button {
+  justify-content: flex-start;
+  border: none;
+  background: none;
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+  min-height: 32px;
+  padding: 4px 10px;
+}
+
+.drp-presets button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.drp-presets button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.drp-months {
+  display: flex;
+  gap: 20px;
+}
+
+.drp-month-head {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.drp-month-title {
+  margin: 0;
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.drp-nav {
+  min-height: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}
+
+.drp-nav:hover {
+  background: var(--surface-2);
+}
+
+.drp-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.drp-grid {
+  width: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.drp-grid th {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 0 6px;
+  text-align: center;
+  border-bottom: none;
+}
+
+.drp-grid tbody td {
+  padding: 1px 0;
+  text-align: center;
+  border-bottom: none;
+}
+
+/* The range: a band behind the days, with solid caps at both ends. */
+.drp-grid td.in-range {
+  background: var(--range);
+}
+
+.drp-grid td.in-range.is-preview {
+  background: var(--range-preview);
+}
+
+.drp-grid td.in-range.is-start {
+  background: linear-gradient(to right, transparent 50%, var(--range) 50%);
+}
+
+.drp-grid td.in-range.is-end {
+  background: linear-gradient(to left, transparent 50%, var(--range) 50%);
+}
+
+.drp-day {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font-weight: 500;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.drp-day:hover {
+  background: var(--surface-2);
+}
+
+.drp-day:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.drp-day.is-today {
+  font-weight: 750;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.drp-grid td.is-start .drp-day,
+.drp-grid td.is-end .drp-day {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.drp-grid td.is-preview.is-start .drp-day,
+.drp-grid td.is-preview.is-end .drp-day {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.drp-day[aria-disabled="true"] {
+  color: var(--muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.drp-day[aria-disabled="true"]:hover {
+  background: none;
+}
+
+.drp-dot {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.drp-day.has-usage .drp-dot {
+  display: block;
+}
+
+.drp-grid td.is-start .drp-dot,
+.drp-grid td.is-end .drp-dot {
+  background: var(--accent-ink);
+}
+
+.drp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.drp-status {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.drp-status.error {
+  color: var(--critical-text);
+}
+
+.drp-tz {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.drp-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  /* On phones: a full-width panel at the bottom of the screen. */
+  .drp {
+    inset: auto 0 0 0;
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    padding: 14px 16px 18px;
+  }
+  .drp-body {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .drp-presets {
+    flex-direction: row;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .drp-presets button {
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    min-height: 30px;
+    padding: 2px 12px;
+    font-size: 0.8rem;
+  }
+  .drp-months,
+  .drp-month,
+  .drp-grid {
+    width: 100%;
+  }
+  .drp-day {
+    width: 100%;
+    max-width: 48px;
+    height: 42px;
+  }
+  .drp-fields {
+    gap: 6px;
+  }
+  .drp-field {
+    flex: 1;
+  }
+  .drp-field input {
+    width: 100%;
+  }
+  .drp-footer {
+    flex-wrap: wrap;
+  }
+  .drp-actions {
+    width: 100%;
+  }
+  .drp-actions button {
+    flex: 1;
   }
 }

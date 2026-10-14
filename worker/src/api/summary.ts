@@ -112,3 +112,36 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     { etag },
   );
 }
+
+const DaysQuery = z.object({ from: z.iso.date(), to: z.iso.date() });
+
+/**
+ * GET /api/usage-days?from=YYYY-MM-DD&to=YYYY-MM-DD — the days in the range
+ * that have any usage, for marking them in the date picker. Cached like the
+ * summary.
+ */
+export async function usageDays(c: Context<AppEnv>): Promise<Response> {
+  const query = DaysQuery.safeParse(c.req.query());
+  if (!query.success) fail(400, "invalid_request", { message: "from and to must be YYYY-MM-DD" });
+  const { from, to } = query.data;
+  if (from > to) fail(400, "invalid_request", { message: "from must not be after to" });
+  if (daysBetween(from, to) > MAX_SPAN_DAYS) {
+    fail(400, "invalid_request", { message: `at most ${MAX_SPAN_DAYS} days` });
+  }
+
+  const settings = await getSettings(c.env.DB);
+  const etag = `W/"days:${settings.dataVersion}:${settings.timezone}:${from}:${to}"`;
+  if (c.req.header("if-none-match") === etag) {
+    return new Response(null, { status: 304, headers: { etag } });
+  }
+  const { results } = await c.env.DB.prepare(
+    `SELECT DISTINCT day
+       FROM usage_daily
+      WHERE day BETWEEN ?1 AND ?2
+        AND input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens > 0
+      ORDER BY day`,
+  )
+    .bind(from, to)
+    .all<{ day: string }>();
+  return c.json({ days: results.map((r) => r.day) }, 200, { etag });
+}

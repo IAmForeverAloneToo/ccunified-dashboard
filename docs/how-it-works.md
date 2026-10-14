@@ -142,6 +142,7 @@ is kept for good.
 | `GET /api/me`, `POST /api/me/password` | Who's logged in; change your password | any user |
 | `POST /api/me/2fa/setup`, `…/enable`, `…/disable`, `…/recovery-codes` | Two-factor login | any user |
 | `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine and by model | viewer |
+| `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker) | viewer |
 | `GET /api/machines` | Machines and their status | viewer |
 | `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
 | `GET /api/pairing`, `POST /api/pairing/approve`, `POST /api/pairing/deny` | Machines waiting to join | admin |

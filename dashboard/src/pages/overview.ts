@@ -8,11 +8,15 @@ import {
   type Totals,
 } from "../lib/api";
 import { type Column, legend, renderColumns, type Series } from "../lib/chart";
-import { type Child, fill, h, segmented } from "../lib/dom";
+import { rangePicker } from "../lib/daterange";
+import { daysInclusive, formatRange, isDate, MAX_RANGE_DAYS } from "../lib/dates";
+import { type Child, fill, h, s, segmented } from "../lib/dom";
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
 import type { PageContext } from "../main";
 
 type RangeKey = "1" | "7" | "30" | "90" | "365" | "all";
+/** A preset, or "custom" for dates picked in the calendar. */
+type Period = RangeKey | "custom";
 type SplitKey = "machine" | "model";
 type MeasureKey = "tokens" | "output" | "cost";
 
@@ -167,9 +171,48 @@ function readChoice<T extends string>(
   return (options.find(([k]) => k === v)?.[0] ?? fallback) as T;
 }
 
+/** The period in the address: a preset, or range=custom&from=…&to=…. */
+function readPeriod(query: URLSearchParams): { range: Period; from: string; to: string } {
+  const from = query.get("from") ?? "";
+  const to = query.get("to") ?? "";
+  if (
+    query.get("range") === "custom" &&
+    isDate(from) &&
+    isDate(to) &&
+    from <= to &&
+    daysInclusive(from, to) <= MAX_RANGE_DAYS
+  ) {
+    return { range: "custom", from, to };
+  }
+  return { range: readChoice(query, "range", RANGES, "30"), from: "", to: "" };
+}
+
+const calendarIcon = () =>
+  s(
+    "svg",
+    { viewBox: "0 0 16 16", width: "16", height: "16", "aria-hidden": "true" },
+    s("rect", {
+      x: "2",
+      y: "3",
+      width: "12",
+      height: "11",
+      rx: "2",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.5",
+    }),
+    s("path", {
+      d: "M2 6.5h12M5.5 1.5v3M10.5 1.5v3",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.5",
+      "stroke-linecap": "round",
+    }),
+  );
+
 export async function overviewPage(ctx: PageContext) {
   const state = {
-    range: readChoice(ctx.query, "range", RANGES, "30"),
+    ...readPeriod(ctx.query),
     split: readChoice(ctx.query, "by", SPLITS, "machine"),
     measure: readChoice(ctx.query, "measure", MEASURES, "tokens"),
     tableView: false,
@@ -185,10 +228,21 @@ export async function overviewPage(ctx: PageContext) {
   const breakdown = h("div", { class: "card" });
   const models = h("div", { class: "card" });
 
+  const periodText = h("span");
+  const customButton = h(
+    "button",
+    { type: "button", class: "range-button" },
+    calendarIcon(),
+    periodText,
+  );
+  const periodFilter = segmented<Period>("range", "Period", RANGES, state.range, (v) =>
+    update({ range: v }),
+  );
+  periodFilter.append(customButton);
   const filters = h(
     "div",
     { class: "filters", role: "group", "aria-label": "Filters" },
-    segmented("range", "Period", RANGES, state.range, (v) => update({ range: v })),
+    periodFilter,
     segmented("by", "Split by", SPLITS, state.split, (v) => update({ split: v })),
     segmented("measure", "Show", MEASURES, state.measure, (v) => update({ measure: v })),
   );
@@ -228,20 +282,72 @@ export async function overviewPage(ctx: PageContext) {
     draw();
   });
 
+  /** Shows which period is active: a preset's radio button, or the custom button. */
+  function paintPeriod() {
+    const custom = state.range === "custom";
+    customButton.classList.toggle("active", custom);
+    if (custom) {
+      fill(
+        periodText,
+        h("span", { class: "visually-hidden" }, "Custom period: "),
+        formatRange(state.from, state.to),
+      );
+      for (const radio of periodFilter.querySelectorAll<HTMLInputElement>("input[type=radio]")) {
+        radio.checked = false;
+      }
+    } else {
+      fill(periodText, "Custom");
+    }
+  }
+
   function update(change: Partial<typeof state>) {
     Object.assign(state, change);
-    const q = new URLSearchParams({ range: state.range, by: state.split, measure: state.measure });
-    history.replaceState(null, "", `/?${q}`);
+    if (state.range !== "custom") {
+      state.from = "";
+      state.to = "";
+    }
+    const q = new URLSearchParams({ range: state.range });
+    if (state.range === "custom") {
+      q.set("from", state.from);
+      q.set("to", state.to);
+    }
+    q.set("by", state.split);
+    q.set("measure", state.measure);
+    // A new period gets its own history entry, so Back returns to the last one.
+    if (change.range) history.pushState(null, "", `/?${q}`);
+    else history.replaceState(null, "", `/?${q}`);
+    paintPeriod();
     if (change.range) void load();
     else draw();
   }
 
+  /** Today in the dashboard's time zone (the browser's until the first load). */
+  const today = () => summary?.today ?? new Date().toISOString().slice(0, 10);
+
+  const removePicker = rangePicker(customButton, {
+    current: () =>
+      state.range === "custom"
+        ? { from: state.from, to: state.to }
+        : summary
+          ? { from: summary.from, to: summary.to }
+          : { from: addDays(today(), -29), to: today() },
+    today,
+    timezone: () => summary?.timezone ?? "",
+    usageDays: (from, to) =>
+      getCached<{ days: string[] }>(`/usage-days?from=${from}&to=${to}`).then((r) => r.days),
+    onApply: (from, to) => update({ range: "custom", from, to }),
+  });
+  paintPeriod();
+
   async function load() {
     chartBox.classList.add("loading");
     try {
-      const days = state.range === "all" ? ALL_DAYS : Number(state.range);
+      const path =
+        state.range === "custom"
+          ? `/summary?from=${state.from}&to=${state.to}`
+          : `/summary?days=${state.range === "all" ? ALL_DAYS : Number(state.range)}`;
       const [s, m, p] = await Promise.all([
-        getCached<Summary>(`/summary?days=${days}`),
+        getCached<Summary>(path),
         api<MachinesResponse>("/machines"),
         ctx.me.role === "admin"
           ? api<{ requests: PairingRequest[] }>("/pairing").then((r) => r.requests)
@@ -605,13 +711,16 @@ export async function overviewPage(ctx: PageContext) {
     }
   });
   resize.observe(chartBox);
+  // Refresh while the period includes today; past days don't change.
   const timer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void load().catch(() => undefined);
+    const live = state.range !== "custom" || !summary || state.to >= summary.today;
+    if (document.visibilityState === "visible" && live) void load().catch(() => undefined);
   }, 60_000);
 
   await load();
   return () => {
     window.clearInterval(timer);
     resize.disconnect();
+    removePicker();
   };
 }

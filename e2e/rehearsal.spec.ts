@@ -66,6 +66,7 @@ let page: Page;
 let logs: LogSet;
 let machines: [Machine, Machine];
 let expected: [Totals, Totals];
+let ccusagePath: string;
 
 test.beforeAll(async () => {
   test.setTimeout(10 * 60_000);
@@ -95,6 +96,7 @@ test.beforeAll(async () => {
     { cwd: agentDir, stdio: "inherit" },
   );
   const ccusage = join(bin, "ccusage");
+  ccusagePath = ccusage;
   copyFileSync(join(agentDir, "internal/ccusage/bin/linux-amd64/ccusage"), ccusage);
   chmodSync(ccusage, 0o755);
 
@@ -188,14 +190,14 @@ async function expectTiles(totals: Totals, reporting: string) {
 }
 
 /** Each machine's totals for all time, straight from the dashboard's API. */
-async function dashboardTotals(): Promise<Record<string, Totals>> {
-  return page.evaluate(async () => {
+async function dashboardTotals(query = "days=3660"): Promise<Record<string, Totals>> {
+  return page.evaluate(async (q) => {
     const get = async (path: string) => {
       const res = await fetch(path);
       if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
       return res.json();
     };
-    const summary = await get("/api/summary?days=3660");
+    const summary = await get(`/api/summary?${q}`);
     const { machines } = await get("/api/machines");
     const names = new Map<string, string>(
       machines.map((m: { id: string; name: string }) => [m.id, m.name]),
@@ -218,7 +220,7 @@ async function dashboardTotals(): Promise<Record<string, Totals>> {
       t.cost_usd += r.cost_usd;
     }
     return out;
-  });
+  }, query);
 }
 
 function expectSameTotals(actual: Totals | undefined, want: Totals) {
@@ -391,4 +393,41 @@ test("syncing again uploads nothing new and changes no numbers", async () => {
   const totals = await dashboardTotals();
   if (logs.machines[0].files.length > 0) expectSameTotals(totals[NAMES[0]], expected[0]);
   await expectTiles(add(expected[0], expected[1]), "2 of 2");
+});
+
+test("a custom date range shows exactly what ccusage reports for those days", async () => {
+  const shift = (date: string, n: number) =>
+    new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  await page.goto(`${DASHBOARD}/`);
+  const today = await page.evaluate(
+    async () => (await (await fetch("/api/summary?days=1")).json()).today as string,
+  );
+  const from = shift(today, -2);
+  const to = today;
+  await page.locator(".range-button").click();
+  const dialog = page.getByRole("dialog", { name: "Choose dates" });
+  await dialog.getByLabel("From", { exact: true }).fill(from);
+  await dialog.getByLabel("To", { exact: true }).fill(to);
+  await dialog.getByRole("button", { name: "Apply" }).click();
+  await expect(page).toHaveURL(new RegExp(`range=custom&from=${from}&to=${to}`));
+
+  const want = logs.machines.map((m) =>
+    ccusageTotals(ccusagePath, m.claudeDir, TIMEZONE, { since: from, until: to }),
+  ) as [Totals, Totals];
+  const totals = await dashboardTotals(`from=${from}&to=${to}`);
+  NAMES.forEach((name, i) => {
+    const w = want[i] as Totals;
+    if (allTokens(w) > 0) expectSameTotals(totals[name], w);
+    else expect(totals[name]).toBeUndefined();
+  });
+  const sum = add(want[0], want[1]);
+  const tile = (label: string) =>
+    page
+      .locator(".tile")
+      .filter({ has: page.locator(".tile-label", { hasText: new RegExp(`^${label}$`) }) })
+      .locator(".tile-value");
+  await expect(tile("Tokens")).toHaveText(compact(allTokens(sum)));
+  await expect(tile("Output tokens")).toHaveText(compact(sum.output_tokens));
+  await expect(tile("Estimated cost")).toHaveText(money(sum.cost_usd));
+  await page.screenshot({ path: test.info().outputPath("custom-range.png"), fullPage: true });
 });

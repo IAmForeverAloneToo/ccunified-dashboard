@@ -162,10 +162,18 @@ export interface Totals {
 }
 
 /** What ccusage itself reports for a Claude data folder: the expected dashboard numbers. */
-export function ccusageTotals(ccusage: string, claudeDir: string, timezone: string): Totals {
+export function ccusageTotals(
+  ccusage: string,
+  claudeDir: string,
+  timezone: string,
+  days?: { since: string; until: string },
+): Totals {
+  const range = days
+    ? ["--since", days.since.replaceAll("-", ""), "--until", days.until.replaceAll("-", "")]
+    : [];
   const out = execFileSync(
     ccusage,
-    ["claude", "daily", "--json", "--timezone", timezone, "--offline"],
+    ["claude", "daily", "--json", "--timezone", timezone, "--offline", ...range],
     {
       env: { PATH: process.env.PATH, HOME: dirname(claudeDir), CLAUDE_CONFIG_DIR: claudeDir },
       maxBuffer: 64 << 20,

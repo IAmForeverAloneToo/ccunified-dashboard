@@ -21,7 +21,8 @@
     "check:agent": "cd agent && test -z \"$(gofmt -l .)\" && go vet ./... && go run ./tools/fetchccusage && CCUNIFIED_REQUIRE_CCUSAGE=1 go test ./...",
     "demo": "npm run build -w dashboard && node worker/scripts/demo.mjs",
     "build:assets": "node scripts/build-assets.mjs",
-    "rehearsal": "npm run rehearsal -w e2e"
+    "rehearsal": "npm run rehearsal -w e2e",
+    "test:browser": "npm run build -w dashboard && npm run test:browser -w e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

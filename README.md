@@ -21,7 +21,8 @@ cost per machine and per model.
   the background on its own schedule (every 15, 30 or 60 minutes). Linux
   servers keep uploading while you're logged out.
 - **Daily tokens and estimated cost** by machine or by model, for today, 7, 30
-  or 90 days, a year or all time, as a chart or a table.
+  or 90 days, a year, all time, or any dates you pick on a calendar, as a
+  chart or a table.
 - **Yours alone.** The dashboard runs on your Cloudflare account (the free plan
   is enough) at a subdomain you choose, like `usage.example.com`. Nothing goes
   through anyone else's servers.

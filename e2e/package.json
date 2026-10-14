@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p .",
-    "rehearsal": "playwright test"
+    "rehearsal": "playwright test --project=rehearsal",
+    "test:browser": "playwright test --project=chrome --project=firefox"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

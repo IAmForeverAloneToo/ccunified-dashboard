@@ -6,8 +6,9 @@
   Worker and dashboard. `npm install -g npm@12` if your Node.js came with an
   older npm.
 - **Go 1.27** or later, for the `ccunified` program.
-- For the full rehearsal: **Linux**, **Google Chrome** (`npx playwright
-  install chrome` installs the current stable version) and `openssl`.
+- For the browser tests: **Google Chrome** and Playwright's **Firefox**
+  (`npx playwright install chrome firefox` installs the current versions).
+  The full rehearsal also needs **Linux** and `openssl`.
 
 The project always uses the latest versions of its tools, libraries and GitHub
 Actions; when you upgrade one, upgrade it to the newest release.
@@ -46,6 +47,7 @@ npm test               # Worker tests, inside workerd
 npm run build          # build the dashboard and bundle the Worker
 npm run check          # all of the above, plus the Go checks and tests
 npm run demo           # the dashboard with demo data at http://localhost:8787
+npm run test:browser   # dashboard tests in Chrome and Firefox
 npm run rehearsal      # the full rehearsal (Linux)
 ```
 
@@ -70,6 +72,11 @@ go vet ./... && go test ./...
   (`UPDATE_SCHEMA=1 npm test -w worker` rewrites it). The example uploads in
   `schema/examples/` must be accepted or rejected by both the Worker and the Go
   program; see [its README](../schema/examples/README.md).
+- **Dashboard:** unit tests for the date logic (`dashboard/src/lib/*.test.ts`,
+  part of `npm test`), and browser tests (`npm run test:browser`) that drive
+  the date range picker in Chrome and Firefox against the demo data: mouse,
+  keyboard, typed dates, shortcuts, cancelling, future days, usage dots,
+  reload and Back, phone layout, and totals matching the API.
 - **Login keys:** `schema/test-vectors/login-kdf.json` holds password-to-key
   results that the browser code, the Worker tests and the Go program must all
   reproduce.
@@ -100,8 +107,9 @@ real browser:
    subdomain).
 4. Google Chrome logs in. Machine two joins; Chrome approves its code.
 5. Checks that the dashboard shows exactly what ccusage reports for each
-   machine's logs, in the API and on the page, and that syncing again changes
-   nothing.
+   machine's logs, in the API and on the page, that syncing again changes
+   nothing, and that a custom date range matches ccusage's numbers for the
+   same days.
 
 It uses **this computer's real Claude Code logs** when there are any, copied
 and split between the two machines file by file; the copies are deleted
@@ -144,5 +152,5 @@ User-facing variables are in the [command reference](commands.md#environment-var
 
 `.github/workflows/ci.yml` runs on every push to `Main` and on pull requests:
 the Worker and dashboard checks, the Go tests on Windows and Linux, the real
-background-schedule test on both, the installer checks and the full
-rehearsal. Releases are covered in [Releasing](releasing.md).
+background-schedule test on both, the installer checks, the dashboard's
+browser tests in Chrome and Firefox, and the full rehearsal. Releases are covered in [Releasing](releasing.md).

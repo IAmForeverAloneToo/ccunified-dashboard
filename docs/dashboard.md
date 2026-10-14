@@ -31,8 +31,8 @@ buttons.
 
 The overview answers "how much Claude Code did I use, and where":
 
-- **Period:** today, 7, 30 or 90 days, a year, or all time. *All* starts at the
-  first day with any usage.
+- **Period:** today, 7, 30 or 90 days, a year, or all time (*All* starts at the
+  first day with any usage), or any dates you pick with **Custom** (see below).
 - **Split by:** machine or model.
 - **Show:** all tokens (input, output and cache), output tokens only, or
   estimated cost.
@@ -47,7 +47,33 @@ The overview answers "how much Claude Code did I use, and where":
   schedule.
 
 Days begin and end in the dashboard's time zone (shown under the page title).
-The page refreshes every minute.
+The page refreshes every minute while the period includes today.
+
+### Picking your own dates
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/date-range-dark.png">
+  <img alt="The date picker open under the Period controls: From and To fields, shortcuts such as Last month, and two months of calendar with September 10 to 25 highlighted" src="images/date-range-light.png">
+</picture>
+
+Click **Custom** next to the period buttons:
+
+1. Click the first day, then the last; the range is highlighted as you move
+   the pointer. Clicking a day twice picks just that day. You can also type
+   the dates (like `2026-09-03`) in **From** and **To**, or use a shortcut:
+   this or last week, month or year.
+2. Click **Apply** (or press Enter in a date field). **Cancel**, Escape or
+   clicking elsewhere leaves the period as it was.
+
+- **Dots** mark the days that have any usage.
+- **Days after today** (in the dashboard's time zone) can't be picked.
+- A range can be up to about ten years long.
+- The address includes the dates, so a custom period survives a reload, can
+  be bookmarked or shared, and **Back** returns to the previous period.
+- On a phone, the calendar opens as a full-width panel showing one month.
+- **With the keyboard:** the arrow keys move by day and week, Page Up and Page
+  Down by month (with Shift, by year), Home and End to the start and end of
+  the week, and Enter picks a day.
 
 Models are grouped into families in the chart (Opus, Sonnet, Haiku, Fable and
 other models); the Models table lists every exact model name.

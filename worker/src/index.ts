@@ -6,7 +6,7 @@ import { pollPairing, startPairing } from "./agent/pair";
 import { listMachines, renameMachine, revokeMachine } from "./api/machines";
 import { approvePairing, denyPairing, listPairing } from "./api/pairing";
 import { readSettings, updateSettings } from "./api/settings";
-import { summary } from "./api/summary";
+import { summary, usageDays } from "./api/summary";
 import { createUser, deleteUser, listUsers, updateUser } from "./api/users";
 import { serveAsset } from "./assets";
 import {
@@ -61,6 +61,7 @@ api.post("/me/2fa/disable", requireUser(), disableTotp);
 api.post("/me/2fa/recovery-codes", requireUser(), regenerateRecoveryCodes);
 
 api.get("/summary", requireUser(), summary);
+api.get("/usage-days", requireUser(), usageDays);
 api.get("/machines", requireUser(), listMachines);
 api.patch("/machines/:id", requireUser("admin"), renameMachine);
 api.delete("/machines/:id", requireUser("admin"), revokeMachine);

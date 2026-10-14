@@ -31,7 +31,7 @@ jobs:
       - run: npm run build
 
   rehearsal:
-    name: Full rehearsal (setup, pairing, sync, dashboard in Chrome)
+    name: Browser tests and full rehearsal
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,14 +46,16 @@ jobs:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
       - run: npm ci
-      - name: Install the latest stable Google Chrome
-        run: npx playwright install --with-deps chrome
+      - name: Install the latest stable Google Chrome, and Firefox
+        run: npx playwright install --with-deps chrome firefox
       # CI machines have no Claude Code logs, so the rehearsal generates some.
       - run: npm run rehearsal
+      - name: Dashboard tests in Chrome and Firefox
+        run: npm run test:browser
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: rehearsal-screenshots
+          name: browser-test-results
           path: e2e/test-results/
           if-no-files-found: ignore
 

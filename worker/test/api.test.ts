@@ -234,6 +234,54 @@ describe("machines", () => {
   });
 });
 
+describe("usage days", () => {
+  test("lists the days with any usage, and supports ETags", async () => {
+    const m = await w.createMachine({ name: "days" });
+    await w.fetch(
+      "/agent/ingest",
+      jsonInit(
+        "POST",
+        payload({
+          range: { from: "2025-03-01", to: "2025-03-05" },
+          days: [
+            { date: "2025-03-01", source: "claude", models: [model("opus", 3, 0.3)] },
+            { date: "2025-03-02", source: "claude", models: [model("opus", 0, 0)] },
+            { date: "2025-03-04", source: "claude", models: [model("haiku", 1, 0.01)] },
+          ],
+        }),
+        { headers: { authorization: `Bearer ${m.token}` } },
+      ),
+    );
+    const res = await w.fetch("/api/usage-days?from=2025-03-01&to=2025-03-31", {
+      cookie: viewer.cookie,
+    });
+    expect(res.status).toBe(200);
+    // A day whose rows are all zero doesn't count.
+    expect(await res.json()).toEqual({ days: ["2025-03-01", "2025-03-04"] });
+
+    const again = await w.fetch("/api/usage-days?from=2025-03-01&to=2025-03-31", {
+      cookie: viewer.cookie,
+      headers: { "if-none-match": res.headers.get("etag") ?? "" },
+    });
+    expect(again.status).toBe(304);
+  });
+
+  test.each([
+    ["", "missing dates"],
+    ["?from=2025-03-01", "missing end"],
+    ["?from=2025-03-31&to=2025-03-01", "reversed"],
+    ["?from=2000-01-01&to=2025-01-01", "longer than ten years"],
+    ["?from=2025-3-1&to=2025-03-31", "not YYYY-MM-DD"],
+  ])("rejects %s (%s)", async (query) => {
+    const res = await w.fetch(`/api/usage-days${query}`, { cookie: viewer.cookie });
+    expect(res.status).toBe(400);
+  });
+
+  test("needs a login", async () => {
+    expect((await w.fetch("/api/usage-days?from=2025-03-01&to=2025-03-31")).status).toBe(401);
+  });
+});
+
 describe("settings", () => {
   test("viewers can read settings", async () => {
     const res = await w.fetch("/api/settings", { cookie: viewer.cookie });
