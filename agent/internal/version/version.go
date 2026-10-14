@@ -4,3 +4,7 @@ package version
 // Version is the program version, set at build time with
 // -ldflags "-X github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version.Version=1.2.3".
 var Version = "dev"
+
+// Repo is the public GitHub repository releases come from, set at build
+// time for forks with -X ...version.Repo=owner/name.
+var Repo = "IAmForeverAloneToo/ccunified-dashboard"

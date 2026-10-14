@@ -55,3 +55,57 @@ jobs:
       - run: go test ./...
         env:
           CCUNIFIED_REQUIRE_CCUSAGE: "1"
+
+  scheduler:
+    name: Background schedule (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go run ./tools/fetchccusage
+      - name: Start a systemd user session, as lingering does on a real machine
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$USER"
+          runtime_dir="/run/user/$(id -u)"
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do
+            XDG_RUNTIME_DIR="$runtime_dir" systemctl --user show-environment >/dev/null 2>&1 && break
+            sleep 1
+          done
+          XDG_RUNTIME_DIR="$runtime_dir" systemctl --user is-system-running || true
+      - name: Install, trigger and remove the real scheduled sync
+        run: go test ./internal/schedule/ -run Integration -v -count=1
+        env:
+          CCUNIFIED_TEST_SCHEDULER: "1"
+
+  installers:
+    name: Installer scripts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck install.sh
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/install.sh
+      - name: Parse install.ps1 (Windows PowerShell 5.1 and PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $check = '$errs = $null; [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$null, [ref]$errs) | Out-Null; if ($errs) { $errs | Format-List; exit 1 }'
+          powershell.exe -NoProfile -Command $check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          pwsh -NoProfile -Command $check
