@@ -1,0 +1,33 @@
+{
+  "description": "Browser-side login key derivation (v1). salt = SHA-256(\"ccunified-login-v1|\" + install_id + \"|\" + lowercase(username)); login_key = base64url(PBKDF2-SHA256(NFC(password), salt, 600000 iterations, 32 bytes)). Computed independently with Node crypto; checked by the Worker/dashboard (TypeScript) and agent (Go) tests.",
+  "vectors": [
+    {
+      "install_id": "0123456789abcdef0123456789abcdef",
+      "username": "alice",
+      "password": "correct horse battery staple",
+      "salt_hex": "afe3111e9b8a58b7707bc600285f008a6b5fa96230e97f364ae6caa22d8bae70",
+      "login_key": "RM4H75cHVLqtFjcPdqqEi4N44ruRaaABmktxpJ5ngq8"
+    },
+    {
+      "install_id": "0123456789abcdef0123456789abcdef",
+      "username": "Alice",
+      "password": "correct horse battery staple",
+      "salt_hex": "afe3111e9b8a58b7707bc600285f008a6b5fa96230e97f364ae6caa22d8bae70",
+      "login_key": "RM4H75cHVLqtFjcPdqqEi4N44ruRaaABmktxpJ5ngq8"
+    },
+    {
+      "install_id": "fedcba9876543210fedcba9876543210",
+      "username": "bob.smith",
+      "password": "pässwörd with ünïcödé ✓",
+      "salt_hex": "c457c7b23fbb7cab810fc143346261bbdef5a460dd590c2db7e7fabf21da8146",
+      "login_key": "-v6yODtUgpF7x8AdD3I9UL4pwe3OV_dIzQc7hAo02P8"
+    },
+    {
+      "install_id": "00000000000000000000000000000000",
+      "username": "x_y-z",
+      "password": "",
+      "salt_hex": "f3d0d3863db004fab54831f08fcbe8103008c99c154be0ed87c322d061206e91",
+      "login_key": "_euh_zvsL5Hn5MW9b6LTCWlhggwTElEbPpKwvOIq27U"
+    }
+  ]
+}

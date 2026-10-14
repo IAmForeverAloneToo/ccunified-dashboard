@@ -7,7 +7,7 @@ export function base64url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-export function randomBytes(length: number): Uint8Array {
+export function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(length));
 }
 
@@ -31,4 +31,16 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
   return diff === 0;
+}
+
+/** Decodes URL-safe base64 (padding optional). Returns undefined for malformed input. */
+export function fromBase64url(value: string): Uint8Array<ArrayBuffer> | undefined {
+  if (!/^[A-Za-z0-9_-]*$/.test(value)) return undefined;
+  const b64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  try {
+    const binary = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+    return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  } catch {
+    return undefined;
+  }
 }

@@ -32,6 +32,9 @@ Status: **plan only. Nothing is built yet.**
 | Linux while logged out | Keeps syncing; setup may ask for your sudo password once to allow this |
 | Updates | The dashboard flags out-of-date machines; you run `ccunified update` on each one when you choose |
 | Program name | `ccunified` |
+| Password hashing | Done in the browser (600,000 rounds of PBKDF2-SHA256), plus a quick salted hash on the Worker. Measured in step 4: Cloudflare's free plan can't do strong hashing on the server within its 10 ms CPU limit |
+| Tool versions | Always the latest: Node.js 24 LTS, npm 12, Go 1.27, TypeScript 7, Vitest 5, plus the latest of every library and GitHub Action |
+| License | MIT, copyright IAmForeverAloneToo |
 | Git | Everything is pushed to `Main` |
 
 ---
@@ -305,8 +308,18 @@ usage_daily       (machine_id, source, day, model,
   Cloudflare account or on your machine.
 - **Cloudflare token:** used only while the wizard runs, then discarded. The
   wizard asks for the fewest permissions that do the job.
-- **Passwords:** stored only as slow, salted hashes (PBKDF2-SHA256), never
-  in plain text.
+- **Passwords never leave the browser.**
+  - The browser stretches each password with 600,000 rounds of PBKDF2-SHA256
+    (OWASP's recommendation), salted per user and per install, and sends only
+    the result.
+  - The Worker stores a salted hash of that result, so a stolen copy of the
+    database is as slow to crack as if the server had done all 600,000
+    rounds.
+  - Strong hashing on the server isn't possible within the free plan's 10 ms
+    CPU limit: measured, 100,000 rounds take about 17 ms.
+  - Because the server never sees the password, it can't check password
+    strength itself. The dashboard and the wizard require at least 10
+    characters.
 - **Logging in:**
   - The session cookie can't be read by scripts, is only sent over HTTPS,
     and isn't sent with requests from other sites.
@@ -371,7 +384,7 @@ usage_daily       (machine_id, source, day, model,
 
 | Area | Tool | Role |
 |---|---|---|
-| Machine program | Go 1.24+ (standard library, plus a small library for terminal prompts) | Self-contained Windows and Linux programs |
+| Machine program | Go 1.27 (standard library, plus a small library for terminal prompts) | Self-contained Windows and Linux programs |
 | Machine program | ccusage 20.0.31 native programs (MIT) | Reads Claude Code's logs |
 | Cloudflare | Workers, D1 | Hosting and database (free plan) |
 | Cloudflare | Cloudflare REST API | Used by the wizard to create everything; no Wrangler needed for users |
@@ -379,9 +392,10 @@ usage_daily       (machine_id, source, day, model,
 | Worker | Zod | Checks every incoming request |
 | Worker | Web Crypto (built into Workers) | Password hashing, tokens, two-factor codes |
 | Dashboard | Vite | Builds the pages (bundled into the Worker) |
+| Development only | Node.js 24 LTS + npm 12 | Builds and tests the Worker and dashboard; never needed on your machines |
 | Dashboard | Chart.js | Charts |
 | Development only | Wrangler | Runs the Worker locally for tests |
-| Tests | Vitest + `@cloudflare/vitest-pool-workers` | Worker tests inside the real Workers runtime |
+| Tests | Vitest + Miniflare | Worker tests inside workerd, Cloudflare's real runtime, against a real D1 database. Cloudflare's Vitest plugin doesn't support the latest Vitest yet, so Miniflare is used directly |
 | Tests | `go test` | Machine program tests |
 | Tests | Playwright | Automated browser test of the whole flow |
 | Quality | Biome (TypeScript), gofmt + go vet (Go) | Formatting and linting |
@@ -404,7 +418,7 @@ Everything should fit Cloudflare's free plan.
 
 | Risk | Mitigation |
 |---|---|
-| Password hashing may be too slow for the free plan's 10 ms CPU limit per request | Measured in step 4. If it's too slow, I'll come back to you with the options before choosing |
+| Password hashing too slow for the free plan's 10 ms CPU limit | Resolved in step 4: hashing moved to the browser (see Security) |
 | Cloudflare API token permissions or API behaviour differ from the docs | Step 11 is the real check. The wizard reports exactly which call failed and why |
 | A future ccusage changes its output | Version is pinned; example-based tests catch it before any upgrade |
 | Claude Code changes its log format | ccusage usually updates quickly; we raise the pin after tests pass |

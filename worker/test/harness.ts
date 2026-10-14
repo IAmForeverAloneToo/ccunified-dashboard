@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Miniflare } from "miniflare";
@@ -26,15 +26,35 @@ export const sha256Hex = (s: string) => createHash("sha256").update(s).digest("h
 
 export const ORIGIN = "http://localhost";
 
+/** A random login key, as a browser would derive from a password. */
+export const newLoginKey = () => randomBytes(32).toString("base64url");
+
+/** The server's stored form of a login key, computed independently of the Worker's code. */
+export function serverHash(loginKey: string): string {
+  const salt = randomBytes(16);
+  const hash = pbkdf2Sync(Buffer.from(loginKey, "base64url"), salt, 5000, 32, "sha256");
+  return `v1$5000$${salt.toString("base64url")}$${hash.toString("base64url")}`;
+}
+
+export interface TestUser {
+  id: string;
+  username: string;
+  key: string;
+  cookie: string;
+}
+
 export interface TestWorker {
   mf: Miniflare;
   db: Awaited<ReturnType<Miniflare["getD1Database"]>>;
   fetch(path: string, init?: RequestInit & { cookie?: string }): Promise<Response>;
   sql(query: string, ...params: unknown[]): Promise<Record<string, unknown>[]>;
-  createUser(opts?: { role?: "admin" | "viewer"; username?: string }): Promise<{
-    id: string;
-    cookie: string;
-  }>;
+  createUser(opts?: {
+    role?: "admin" | "viewer";
+    username?: string;
+    key?: string;
+    mustChangePassword?: boolean;
+  }): Promise<TestUser>;
+  login(username: string, key: string, code?: string): Promise<Response>;
   createMachine(opts?: { name?: string }): Promise<{ id: string; token: string }>;
   dispose(): Promise<void>;
 }
@@ -94,20 +114,35 @@ export async function startWorker(): Promise<TestWorker> {
       const id = randomUUID();
       const now = Date.now();
       const token = randomBytes(32).toString("base64url");
+      const username = opts.username ?? `user-${id.slice(0, 8)}`;
+      const key = opts.key ?? newLoginKey();
       await db.batch([
         db
           .prepare(
-            `INSERT INTO users (id, username, password_hash, role, created_at, password_changed_at)
-             VALUES (?1, ?2, 'x', ?3, ?4, ?4)`,
+            `INSERT INTO users (id, username, password_hash, role, must_change_password, created_at, password_changed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)`,
           )
-          .bind(id, opts.username ?? `user-${id.slice(0, 8)}`, opts.role ?? "admin", now),
+          .bind(
+            id,
+            username,
+            serverHash(key),
+            opts.role ?? "admin",
+            opts.mustChangePassword ? 1 : 0,
+            now,
+          ),
         db
           .prepare(
             "INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?3)",
           )
           .bind(sha256Hex(token), id, now, now + 86_400_000),
       ]);
-      return { id, cookie: `__Host-ccu_session=${token}` };
+      return { id, username, key, cookie: `__Host-ccu_session=${token}` };
+    },
+    login(username, key, code) {
+      return worker.fetch(
+        "/api/login",
+        jsonInit("POST", code ? { username, key, code } : { username, key }),
+      );
     },
     async createMachine(opts = {}) {
       const id = randomUUID();

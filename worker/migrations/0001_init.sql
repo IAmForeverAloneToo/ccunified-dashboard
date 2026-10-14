@@ -8,9 +8,12 @@ CREATE TABLE settings (
   value TEXT NOT NULL
 ) STRICT;
 
+-- install_id is public: browsers mix it into the salt of their password
+-- hashing, so the same password never hashes the same way on two installs.
 INSERT INTO settings (key, value) VALUES
   ('timezone', 'UTC'),
-  ('data_version', '0');
+  ('data_version', '0'),
+  ('install_id', lower(hex(randomblob(16))));
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
@@ -20,6 +23,7 @@ CREATE TABLE users (
   totp_secret TEXT,
   totp_enabled INTEGER NOT NULL DEFAULT 0 CHECK (totp_enabled IN (0, 1)),
   totp_last_step INTEGER,
+  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
   created_at INTEGER NOT NULL,
   password_changed_at INTEGER NOT NULL,
   last_login_at INTEGER,

@@ -7,6 +7,7 @@ export interface SessionUser {
   username: string;
   role: "admin" | "viewer";
   totpEnabled: boolean;
+  mustChangePassword: boolean;
   sessionHash: string;
 }
 

@@ -46,7 +46,7 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
   const sessionHash = await sha256Hex(token);
   const now = Date.now();
   const row = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.role, u.totp_enabled, s.last_seen_at
+    `SELECT u.id, u.username, u.role, u.totp_enabled, u.must_change_password, s.last_seen_at
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.id_hash = ?1 AND s.expires_at > ?2 AND u.disabled_at IS NULL`,
   )
@@ -56,6 +56,7 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
       username: string;
       role: "admin" | "viewer";
       totp_enabled: number;
+      must_change_password: number;
       last_seen_at: number;
     }>();
   if (!row) return undefined;
@@ -71,17 +72,39 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
     username: row.username,
     role: row.role,
     totpEnabled: row.totp_enabled === 1,
+    mustChangePassword: row.must_change_password === 1,
     sessionHash,
   };
 }
 
-/** Requires a logged-in user with at least the given role. */
-export function requireUser(role: keyof typeof ROLE_RANK = "viewer"): MiddlewareHandler<AppEnv> {
+/**
+ * Requires a logged-in user with at least the given role. Users whose
+ * password was set by an admin must choose their own before anything else,
+ * except on routes marked `beforePasswordChange`.
+ */
+export function requireUser(
+  role: keyof typeof ROLE_RANK = "viewer",
+  options: { beforePasswordChange?: boolean } = {},
+): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const user = await currentUser(c);
     if (!user) fail(401, "not_logged_in");
+    if (user.mustChangePassword && !options.beforePasswordChange) {
+      fail(403, "password_change_required");
+    }
     if (ROLE_RANK[user.role] < ROLE_RANK[role]) fail(403, "forbidden");
     c.set("user", user);
     await next();
   };
+}
+
+/** Ends every session of a user except, optionally, the current one. */
+export function endOtherSessions(
+  db: D1Database,
+  userId: string,
+  keepSessionHash: string | null,
+): D1PreparedStatement {
+  return db
+    .prepare("DELETE FROM sessions WHERE user_id = ?1 AND id_hash IS NOT ?2")
+    .bind(userId, keepSessionHash);
 }

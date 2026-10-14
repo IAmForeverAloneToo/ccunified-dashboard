@@ -52,6 +52,7 @@ describe("access control", () => {
       username: "victor",
       role: "viewer",
       totp_enabled: false,
+      must_change_password: false,
     });
   });
 
