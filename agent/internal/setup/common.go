@@ -99,6 +99,9 @@ func finish(ctx context.Context, p *prompt.Prompter, h *Hooks, cfg *config.Confi
 		} else {
 			p.Printf("  ✓ %s\n", desc)
 		}
+	} else {
+		p.Printf("  - No background sync was set up. Run \"ccunified sync\" yourself, or\n")
+		p.Printf("    set it up later with: ccunified setup --schedule-only\n")
 	}
 	if h.FirstSync != nil {
 		p.Printf("  … Uploading this machine's usage history\n")

@@ -108,6 +108,13 @@ export function machineSeries(machines: Machine[]): Map<string, Series> {
   return map;
 }
 
+/** "All" starts at the first day with usage, not at the API's ten-year limit. */
+function fromFirstUsage(s: Summary): Summary {
+  let first = s.to;
+  for (const r of s.by_day_machine) if (r.day < first) first = r.day;
+  return { ...s, from: first };
+}
+
 // ---------- Time buckets ----------
 
 type Bucket = "day" | "week" | "month";
@@ -240,7 +247,7 @@ export async function overviewPage(ctx: PageContext) {
           ? api<{ requests: PairingRequest[] }>("/pairing").then((r) => r.requests)
           : Promise.resolve([] as PairingRequest[]),
       ]);
-      summary = s;
+      summary = state.range === "all" ? fromFirstUsage(s) : s;
       machines = m.machines;
       pending = p;
       draw();
@@ -254,7 +261,9 @@ export async function overviewPage(ctx: PageContext) {
     const s = summary;
     const tzNote = document.querySelector("#tz-note");
     if (tzNote) {
-      tzNote.textContent = `${day(s.from, "long")} – ${day(s.to, "long")} · days in ${s.timezone}`;
+      const period =
+        s.from === s.to ? day(s.to, "long") : `${day(s.from, "long")} – ${day(s.to, "long")}`;
+      tzNote.textContent = `${period} · days in ${s.timezone}`;
     }
     drawBanners();
     drawTiles(s);

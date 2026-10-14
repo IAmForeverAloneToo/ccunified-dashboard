@@ -17,3 +17,7 @@ agent/internal/ccusage/bin/
 agent/bin/
 /out/
 /dist/
+
+# Rehearsal output
+e2e/test-results/
+e2e/playwright-report/

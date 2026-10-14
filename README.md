@@ -26,6 +26,13 @@ go vet ./... && go test ./...
 
 `npm run check` runs all of the above.
 
+`npm run rehearsal` runs the whole flow on Linux: the real `ccunified`
+program creates a dashboard on a stand-in Cloudflare (D1 and the Worker run in
+workerd), a second machine joins with a code approved in Google Chrome, and
+the dashboard must show exactly what ccusage reports. It uses this computer's
+Claude Code logs if there are any (copied, then deleted afterwards; only
+daily totals are uploaded), otherwise it generates some.
+
 ## Releasing
 
 Every push to `Main` builds the release files and test-installs them on real

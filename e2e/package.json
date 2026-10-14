@@ -1,0 +1,14 @@
+{
+  "name": "@ccunified/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "rehearsal": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "24.19.2",
+    "miniflare": "5.20261012.0-beta"
+  }
+}

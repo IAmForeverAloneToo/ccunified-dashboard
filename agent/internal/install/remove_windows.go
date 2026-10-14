@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -20,13 +21,37 @@ func RemoveProgram(dir string) error {
 	if err := removeFromUserPath(dir); err != nil {
 		return err
 	}
-	cmd := exec.Command("cmd.exe", "/c", fmt.Sprintf(`ping -n 4 127.0.0.1 >nul & rmdir /s /q "%s"`, dir))
-	cmd.Dir = os.TempDir()
+	return removeDirLater(dir, 3)
+}
+
+// removeDirLater starts a hidden cmd.exe that waits about delaySeconds, then
+// deletes dir, trying once more a little later if something still held a file.
+func removeDirLater(dir string, delaySeconds int) error {
+	shell := "cmd.exe"
+	if root := os.Getenv("SystemRoot"); root != "" {
+		shell = filepath.Join(root, "System32", "cmd.exe")
+	}
+	cmd := exec.Command(shell)
+	// cmd.exe doesn't parse the C-style escaping Go uses for arguments
+	// (\"), so the command line is passed as is. With /s, cmd strips just
+	// the outermost quotes and runs the rest.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CmdLine:       removeDirCmdLine(dir, delaySeconds),
 		HideWindow:    true,
 		CreationFlags: windows.CREATE_NO_WINDOW | windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
 	}
-	return cmd.Start()
+	cmd.Dir = os.TempDir()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
+
+func removeDirCmdLine(dir string, delaySeconds int) string {
+	q := `"` + dir + `"`
+	wait := func(s int) string { return fmt.Sprintf("ping -n %d 127.0.0.1 >nul", s+1) }
+	return fmt.Sprintf(`cmd.exe /d /s /c "%s & rmdir /s /q %s & if exist %s (%s & rmdir /s /q %s)"`,
+		wait(delaySeconds), q, q, wait(5), q)
 }
 
 func removeFromUserPath(dir string) error {

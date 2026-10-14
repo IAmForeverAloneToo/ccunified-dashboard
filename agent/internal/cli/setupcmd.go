@@ -28,7 +28,7 @@ func init() {
 	register(&Command{
 		Name:    "setup",
 		Summary: "Create a new dashboard, or connect this machine to an existing one",
-		Usage:   "ccunified setup [--schedule-only]",
+		Usage:   "ccunified setup [--no-schedule | --schedule-only]",
 		Run:     runSetup,
 	})
 	register(&Command{
@@ -108,8 +108,12 @@ func hooks(p *prompt.Prompter) *setup.Hooks {
 func runSetup(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("setup", env)
 	scheduleOnly := fs.Bool("schedule-only", false, "only (re)install the background sync")
+	noSchedule := fs.Bool("no-schedule", false, "don't set up the background sync (run ccunified sync yourself)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *scheduleOnly && *noSchedule {
+		return &UsageError{Msg: "use either --no-schedule or --schedule-only, not both"}
 	}
 	p := prompt.New(env.Stdin, env.Stdout)
 	if *scheduleOnly {
@@ -124,7 +128,11 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 		env.Printf("%s\n", desc)
 		return nil
 	}
-	return setup.Run(ctx, p, hooks(p), cloudflareFactory)
+	h := hooks(p)
+	if *noSchedule {
+		h.InstallSchedule = nil
+	}
+	return setup.Run(ctx, p, h, cloudflareFactory)
 }
 
 func runServer(ctx context.Context, env *Env, args []string) error {
