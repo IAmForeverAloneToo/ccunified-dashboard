@@ -26,7 +26,7 @@ side, with tokens and estimated cost per machine, per tool and per model.
   Qwen, Kimi and more. Nothing to configure.
 - **Daily tokens and estimated cost** by machine, tool or model, for today, 7,
   30 or 90 days, a year, all time, or any dates you pick on a calendar, as a
-  chart or a table.
+  chart or a table. Filter the whole page to any machines, tools or models.
 - **Yours alone.** The dashboard runs on your Cloudflare account (the free plan
   is enough) at a subdomain you choose, like `usage.example.com`. Nothing goes
   through anyone else's servers.

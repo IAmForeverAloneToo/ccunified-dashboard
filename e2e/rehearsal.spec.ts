@@ -14,6 +14,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Page, test } from "@playwright/test";
+import { modelFamily } from "../dashboard/src/lib/models";
 import { FakeCloudflare } from "./src/fake-cloudflare";
 import { Machine } from "./src/machine";
 import {
@@ -487,4 +488,112 @@ test("a custom date range shows exactly what ccusage reports for those days", as
   await expect(tile("Output tokens")).toHaveText(compact(sum.output_tokens));
   await expect(tile("Estimated cost")).toHaveText(money(sum.cost_usd));
   await page.screenshot({ path: test.info().outputPath("custom-range.png"), fullPage: true });
+});
+
+test("filters show exactly what ccusage reports for those machines, tools and models", async () => {
+  const filterButton = (name: string) =>
+    page.getByRole("button", { name: new RegExp(`^${name} `) });
+  /** Starts from no filters, then ticks the given items of each filter. */
+  async function filterTo(picks: Record<string, string[]>) {
+    await page.goto(`${DASHBOARD}/?range=all`);
+    await expect(page.locator(".tile-value").first()).not.toBeEmpty();
+    for (const [name, labels] of Object.entries(picks)) {
+      await filterButton(name).click();
+      const list = page.getByRole("dialog", { name: `Filter by ${name.toLowerCase()}` });
+      for (const label of labels) {
+        await list.getByRole("checkbox", { name: label, exact: true }).check();
+      }
+      await page.keyboard.press("Escape");
+      await expect(list).toBeHidden();
+    }
+  }
+  /** A table's exact total tokens and cost: its Total row, or its only row. */
+  async function tableTotal(title: string): Promise<{ tokens: number; cost: string }> {
+    const card = page
+      .locator(".card")
+      .filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+    const headers = await card.locator("thead th").allTextContents();
+    const row =
+      (await card.locator("tfoot tr").count()) > 0
+        ? card.locator("tfoot tr")
+        : card.locator("tbody tr");
+    await expect(row).toHaveCount(1);
+    const cells = row.locator("th, td");
+    const tokens = Number(
+      (await cells.nth(headers.indexOf("Total tokens")).textContent())?.replaceAll(",", ""),
+    );
+    const cost = (await cells.nth(headers.indexOf("Est. cost")).textContent()) ?? "";
+    return { tokens, cost };
+  }
+  const none: Totals = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    cost_usd: 0,
+  };
+  const sum = (list: Totals[]) => list.reduce(add, none);
+  const tile = (label: string) =>
+    page
+      .locator(".tile")
+      .filter({ has: page.locator(".tile-label", { hasText: new RegExp(`^${label}$`) }) })
+      .locator(".tile-value");
+  const expectTable = async (title: string, want: Totals, what: string) => {
+    const got = await tableTotal(title);
+    expect(got.tokens, what).toBe(allTokens(want));
+    expect(got.cost, what).toBe(money(want.cost_usd));
+  };
+
+  // One tool at a time, across both machines.
+  const tools = [...new Set(NAMES.flatMap((_, i) => usedTools(i)))];
+  expect(tools.length).toBeGreaterThan(1);
+  for (const tool of tools) {
+    await filterTo({ Tools: [TOOL_NAMES[tool] ?? tool] });
+    await expect(page).toHaveURL(new RegExp(`tool=${tool}`));
+    const want = sum(expected.map((e) => e.byTool[tool] ?? none));
+    await expectTable("Machines", want, tool);
+    await expect(tile("Tokens")).toHaveText(compact(allTokens(want)));
+  }
+
+  // A machine and a tool together.
+  const i = NAMES.findIndex((_, n) => usedTools(n).includes("claude") && usedTools(n).length > 1);
+  if (i >= 0) {
+    await filterTo({ Machines: [NAMES[i] as string], Tools: ["Claude Code"] });
+    await expectTable("Machines", expected[i]?.byTool.claude as Totals, `${NAMES[i]} + claude`);
+  }
+
+  // Each model family, as the chart names them, whichever tool used it.
+  const families = new Map<string, { label: string; totals: Totals[] }>();
+  for (const e of expected) {
+    for (const models of Object.values(e.byToolModel)) {
+      for (const [model, t] of Object.entries(models)) {
+        if (allTokens(t) === 0) continue; // ccunified leaves out models with no tokens
+        const f = modelFamily(model);
+        const entry = families.get(f.id) ?? { label: f.label, totals: [] };
+        entry.totals.push(t);
+        families.set(f.id, entry);
+      }
+    }
+  }
+  console.log(`  model families: ${[...families.values()].map((f) => f.label).join(", ")}`);
+  for (const { label, totals } of families.values()) {
+    await filterTo({ Models: [label] });
+    await expectTable("Models", sum(totals), label);
+  }
+
+  // The chart names every family; "Other models" is only for more than eight.
+  await page.goto(`${DASHBOARD}/?range=all&by=model`);
+  const legend = page.locator(".legend-item");
+  if (families.size > 1) {
+    await expect(legend).toHaveCount(Math.min(families.size, 8));
+    if (families.size <= 8) await expect(legend.filter({ hasText: "Other models" })).toHaveCount(0);
+  }
+  await page.screenshot({ path: test.info().outputPath("models.png"), fullPage: true });
+
+  // Clearing the filters brings back everything.
+  await filterTo({ Tools: [TOOL_NAMES[tools[0] as string] ?? ""] });
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await expect(tile("Tokens")).toHaveText(
+    compact(allTokens(add(expected[0].total, expected[1].total))),
+  );
 });

@@ -117,8 +117,10 @@ real browser:
 4. Google Chrome logs in. Machine two joins; Chrome approves its code.
 5. Checks that the dashboard shows exactly what ccusage reports for each
    machine's logs, per machine and per tool, in the API and on the page, that
-   syncing again changes nothing, and that a custom date range matches
-   ccusage's numbers for the same days.
+   syncing again changes nothing, that a custom date range matches
+   ccusage's numbers for the same days, and that filtering by each tool, by a
+   machine and a tool, and by each model family shows exactly ccusage's
+   numbers for those, with every family named in the chart.
 
 The machines use Claude Code, Codex and OpenCode logs. For each tool it uses
 **this computer's real logs** when there are any, copied and split between
@@ -130,7 +132,7 @@ OpenCode's on the second). Screenshots go to `e2e/test-results/`.
 
 The screenshots in `docs/images/` show the demo data. Run `npm run demo`, then
 capture the Overview (30 days, split by machine, and split by tool), the
-Machines page and the date picker at 1280 px wide in light and dark mode, at
+Models filter open, the Machines page and the date picker at 1280 px wide in light and dark mode, at
 2× scale.
 
 ## Upgrading ccusage

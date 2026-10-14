@@ -110,7 +110,7 @@ as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/tools-dark.png">
-  <img alt="The overview's chart split by tool: daily tokens stacked by Claude Code, Codex, Gemini CLI and OpenCode" src="images/tools-light.png">
+  <img alt="The overview's chart split by tool: daily tokens stacked by Claude Code, Codex, Gemini CLI, OpenCode and Kimi" src="images/tools-light.png">
 </picture>
 
 - **Colors:** each tool keeps its color: tools get colors in the order the

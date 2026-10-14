@@ -355,15 +355,19 @@ interface RawTotals {
 }
 
 /**
- * What ccusage itself reports for a machine's logs, in total and per tool:
- * the numbers the dashboard must show.
+ * What ccusage itself reports for a machine's logs, in total, per tool, and
+ * per tool and model: the numbers the dashboard must show.
  */
 export function ccusageTotals(
   ccusage: string,
   m: MachineLogs,
   timezone: string,
   days?: { since: string; until: string },
-): { total: Totals; byTool: Record<string, Totals> } {
+): {
+  total: Totals;
+  byTool: Record<string, Totals>;
+  byToolModel: Record<string, Record<string, Totals>>;
+} {
   const range = days
     ? ["--since", days.since.replaceAll("-", ""), "--until", days.until.replaceAll("-", "")]
     : [];
@@ -376,10 +380,16 @@ export function ccusageTotals(
     },
   ).toString();
   const report = JSON.parse(out) as {
-    daily: { agents: (RawTotals & { agent: string })[] }[];
+    daily: {
+      agents: (RawTotals & {
+        agent: string;
+        modelBreakdowns: (Omit<RawTotals, "totalCost"> & { modelName: string; cost: number })[];
+      })[];
+    }[];
   };
   const total = zero();
   const byTool: Record<string, Totals> = {};
+  const byToolModel: Record<string, Record<string, Totals>> = {};
   for (const row of report.daily) {
     for (const a of row.agents) {
       const t = byTool[a.agent] ?? zero();
@@ -391,7 +401,18 @@ export function ccusageTotals(
         into.cache_read_tokens += a.cacheReadTokens;
         into.cost_usd += a.totalCost;
       }
+      const models = byToolModel[a.agent] ?? {};
+      byToolModel[a.agent] = models;
+      for (const m of a.modelBreakdowns) {
+        const into = models[m.modelName] ?? zero();
+        models[m.modelName] = into;
+        into.input_tokens += m.inputTokens;
+        into.output_tokens += m.outputTokens;
+        into.cache_creation_tokens += m.cacheCreationTokens;
+        into.cache_read_tokens += m.cacheReadTokens;
+        into.cost_usd += m.cost;
+      }
     }
   }
-  return { total, byTool };
+  return { total, byTool, byToolModel };
 }
