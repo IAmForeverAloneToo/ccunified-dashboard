@@ -103,11 +103,11 @@ func TestInvalidExamples(t *testing.T) {
 }
 
 // The published JSON Schema must reject the invalid examples too, except the
-// uniqueness rules, which JSON Schema cannot express.
+// rule-* ones (uniqueness and date-range checks), which JSON Schema cannot express.
 func TestSchemaRejectsInvalidExamples(t *testing.T) {
 	schema := compileSchema(t)
 	for name, b := range examples(t, "invalid") {
-		if strings.HasPrefix(name, "duplicate-") {
+		if strings.HasPrefix(name, "rule-") {
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
@@ -123,6 +123,7 @@ func TestNilSlicesAreRejected(t *testing.T) {
 		SchemaVersion: SchemaVersion,
 		Agent:         Agent{Version: "dev", OS: "linux", Arch: "amd64", CcusageVersion: "20.0.31", SyncIntervalMinutes: 30},
 		Timezone:      "UTC",
+		Range:         Range{From: "2026-10-01", To: "2026-10-07"},
 	}
 	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "days") {
 		t.Fatalf("want error about days, got %v", err)

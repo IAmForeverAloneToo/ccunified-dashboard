@@ -8,6 +8,10 @@
     "sync_interval_minutes": 30
   },
   "timezone": "",
+  "range": {
+    "from": "2026-10-07",
+    "to": "2026-10-13"
+  },
   "days": [
     {
       "date": "2026-10-12",

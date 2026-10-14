@@ -8,5 +8,15 @@
     "sync_interval_minutes": 60
   },
   "timezone": "Asia/Tehran",
-  "days": [{ "date": "2026-02-28", "source": "claude", "models": [] }]
+  "range": {
+    "from": "2026-02-28",
+    "to": "2026-02-28"
+  },
+  "days": [
+    {
+      "date": "2026-02-28",
+      "source": "claude",
+      "models": []
+    }
+  ]
 }

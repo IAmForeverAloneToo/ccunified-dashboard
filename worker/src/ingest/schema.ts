@@ -11,10 +11,15 @@ export const INGEST_SCHEMA_VERSION = 1;
 
 /** Upper bounds that keep a single upload small. The agent splits larger backfills. */
 export const LIMITS = {
+  /** Longest date range (inclusive) one upload may cover. */
+  maxRangeDays: 100,
   maxDaysPerUpload: 100,
   maxModelsPerDay: 50,
   maxBodyBytes: 256 * 1024,
 } as const;
+
+/** Where usage comes from. Only Claude Code for now. */
+export const SOURCES = ["claude"] as const;
 
 const MAX_TOKENS = 1_000_000_000_000_000; // 1e15, well inside the safe integer range
 
@@ -42,13 +47,20 @@ export const ModelUsage = z.strictObject({
 export const DayUsage = z
   .strictObject({
     date: z.iso.date(),
-    source: z.enum(["claude"]),
+    source: z.enum(SOURCES),
     models: z.array(ModelUsage).max(LIMITS.maxModelsPerDay),
   })
   .refine((day) => new Set(day.models.map((m) => m.model)).size === day.models.length, {
     message: "each model may appear only once per day",
     path: ["models"],
   });
+
+const isoDate = z.iso.date();
+
+/** Number of calendar days from `from` to `to`, inclusive. */
+export function daySpan(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+}
 
 export const IngestPayload = z
   .strictObject({
@@ -61,12 +73,29 @@ export const IngestPayload = z
       sync_interval_minutes: z.union([z.literal(15), z.literal(30), z.literal(60)]),
     }),
     timezone: z.string().min(1).max(64),
+    /**
+     * The dates this upload covers. The server replaces all of this machine's
+     * rows in the range, so days with no usage are cleared too.
+     */
+    range: z.strictObject({ from: isoDate, to: isoDate }),
     days: z.array(DayUsage).max(LIMITS.maxDaysPerUpload),
   })
-  .refine(
-    (p) => new Set(p.days.map((d) => `${d.source}/${d.date}`)).size === p.days.length,
-    { message: "each (source, date) may appear only once", path: ["days"] },
-  );
+  .refine((p) => p.range.from <= p.range.to, {
+    message: "range.from must not be after range.to",
+    path: ["range"],
+  })
+  .refine((p) => daySpan(p.range.from, p.range.to) <= LIMITS.maxRangeDays, {
+    message: `range may cover at most ${LIMITS.maxRangeDays} days`,
+    path: ["range"],
+  })
+  .refine((p) => p.days.every((d) => d.date >= p.range.from && d.date <= p.range.to), {
+    message: "every day must fall inside range",
+    path: ["days"],
+  })
+  .refine((p) => new Set(p.days.map((d) => `${d.source}/${d.date}`)).size === p.days.length, {
+    message: "each (source, date) may appear only once",
+    path: ["days"],
+  });
 
 export type IngestPayload = z.infer<typeof IngestPayload>;
 export type DayUsage = z.infer<typeof DayUsage>;

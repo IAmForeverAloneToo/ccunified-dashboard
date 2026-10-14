@@ -8,6 +8,10 @@
     "sync_interval_minutes": 30
   },
   "timezone": "America/Toronto",
+  "range": {
+    "from": "2026-01-01",
+    "to": "2026-04-11"
+  },
   "days": [
     {
       "date": "2026-01-01",

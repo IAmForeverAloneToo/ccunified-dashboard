@@ -18,6 +18,7 @@ const SchemaVersion = 1
 
 // Limits mirrored from the Worker. Larger backfills are split into several uploads.
 const (
+	MaxRangeDays     = 100
 	MaxDaysPerUpload = 100
 	MaxModelsPerDay  = 50
 	maxTokens        = 1_000_000_000_000_000
@@ -32,7 +33,15 @@ type Payload struct {
 	SchemaVersion int    `json:"schema_version"`
 	Agent         Agent  `json:"agent"`
 	Timezone      string `json:"timezone"`
+	Range         Range  `json:"range"`
 	Days          []Day  `json:"days"`
+}
+
+// Range is the inclusive span of dates an upload covers. The server replaces
+// all of the machine's rows in this span, so days with no usage are cleared.
+type Range struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // Agent describes the uploading program and machine.
@@ -100,6 +109,16 @@ func (p *Payload) Validate() error {
 	if p.Timezone == "" || len(p.Timezone) > 64 {
 		fail("timezone: must be 1-64 characters")
 	}
+	from, fromErr := parseDate(p.Range.From)
+	to, toErr := parseDate(p.Range.To)
+	switch {
+	case fromErr != nil || toErr != nil:
+		fail("range: invalid dates %q..%q", p.Range.From, p.Range.To)
+	case to.Before(from):
+		fail("range: from %s is after to %s", p.Range.From, p.Range.To)
+	case int(to.Sub(from).Hours()/24)+1 > MaxRangeDays:
+		fail("range: covers more than %d days", MaxRangeDays)
+	}
 	if p.Days == nil {
 		fail("days: must be a list, not null")
 	}
@@ -109,10 +128,10 @@ func (p *Payload) Validate() error {
 
 	seenDays := make(map[string]bool, len(p.Days))
 	for i, d := range p.Days {
-		if !dateRe.MatchString(d.Date) {
+		if _, err := parseDate(d.Date); err != nil {
 			fail("days[%d].date: invalid %q", i, d.Date)
-		} else if _, err := time.Parse(time.DateOnly, d.Date); err != nil {
-			fail("days[%d].date: invalid %q", i, d.Date)
+		} else if fromErr == nil && toErr == nil && (d.Date < p.Range.From || d.Date > p.Range.To) {
+			fail("days[%d].date: %s is outside range %s..%s", i, d.Date, p.Range.From, p.Range.To)
 		}
 		if d.Source != SourceClaude {
 			fail("days[%d].source: unsupported %q", i, d.Source)
@@ -155,4 +174,12 @@ func (p *Payload) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// parseDate accepts exactly YYYY-MM-DD with a real calendar date.
+func parseDate(s string) (time.Time, error) {
+	if !dateRe.MatchString(s) {
+		return time.Time{}, fmt.Errorf("not YYYY-MM-DD: %q", s)
+	}
+	return time.Parse(time.DateOnly, s)
 }

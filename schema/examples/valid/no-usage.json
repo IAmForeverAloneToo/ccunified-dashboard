@@ -8,5 +8,9 @@
     "sync_interval_minutes": 15
   },
   "timezone": "UTC",
+  "range": {
+    "from": "2026-10-07",
+    "to": "2026-10-13"
+  },
   "days": []
 }
