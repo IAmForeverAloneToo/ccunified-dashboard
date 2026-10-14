@@ -20,7 +20,8 @@ export function latestVersion(
   return pickLatest(settings.latestVersion, SERVER_VERSION);
 }
 
-function pickLatest(...versions: (string | null)[]): string | null {
+/** Picks the newest of the given versions, ignoring anything that isn't a version. */
+export function pickLatest(...versions: (string | null)[]): string | null {
   let best: string | null = null;
   for (const v of versions) {
     if (!v || compareVersions(v, v) === undefined) continue;
@@ -55,4 +56,22 @@ export async function refreshLatestVersion(
   const writes = [setSetting(db, "latest_checked_at", now)];
   if (found) writes.push(setSetting(db, "latest_version", found));
   await db.batch(writes);
+}
+
+/**
+ * A machine running a newer release than the dashboard knows of proves that
+ * release exists. Remembering it keeps the pages right without waiting up to
+ * six hours for the next GitHub check, which stays the authority: it
+ * overwrites this value. Only plain releases count, because pre-releases and
+ * development builds are never offered as updates.
+ */
+export function learnLatestVersion(
+  db: D1Database,
+  settings: Settings,
+  reported: string,
+): D1PreparedStatement | undefined {
+  if (!/^\d+\.\d+\.\d+$/.test(reported)) return undefined;
+  const known = pickLatest(settings.latestVersion, SERVER_VERSION);
+  if (known !== null && (compareVersions(reported, known) ?? 0) <= 0) return undefined;
+  return setSetting(db, "latest_version", reported);
 }

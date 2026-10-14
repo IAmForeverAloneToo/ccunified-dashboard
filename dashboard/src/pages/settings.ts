@@ -91,11 +91,11 @@ export async function settingsPage(ctx: PageContext) {
             h(
               "span",
               null,
-              `Version ${settings.latest_version} is available. Update the dashboard by running `,
-              h("code", null, "ccunified server update"),
-              " on any of your machines, then ",
+              `Version ${settings.latest_version} is available. To update the dashboard, run `,
               h("code", null, "ccunified update"),
-              " on each machine.",
+              " on one of your machines, then ",
+              h("code", null, "ccunified server update"),
+              " on that machine. Machines that aren't up to date yet are marked on the Machines page.",
             ),
           ),
       h(

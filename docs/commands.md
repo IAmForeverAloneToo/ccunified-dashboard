@@ -88,8 +88,8 @@ token is used only while the command runs.
 
 Brings the dashboard on Cloudflare up to this program's version: applies any
 new database changes and uploads the new dashboard. Your data, users and
-settings stay. Run it after `ccunified update` when a release changes the
-dashboard.
+settings stay. Run it after `ccunified update`, on the machine you just
+updated. It refuses to replace a newer dashboard with an older program's.
 
 ### `ccunified server reset-password`
 
@@ -113,9 +113,10 @@ dashboard's hostname, such as `usage.example.com`. Afterwards, run
 - **The program on your machines:** run `ccunified update` on each one. The
   dashboard's **Machines** page marks the ones with an older version, and
   `ccunified status` says when a newer release exists.
-- **The dashboard on Cloudflare:** the **Settings** page says when a newer
-  release exists. Update one machine with `ccunified update`, then run
-  `ccunified server update` there.
+- **The dashboard on Cloudflare:** the **Settings** page shows the version the
+  dashboard itself runs, and says when a newer release exists. `ccunified
+  update` doesn't change it; update one machine with `ccunified update`, then
+  run `ccunified server update` there.
 
 Not every release changes the dashboard; the release notes say which part
 changed.

@@ -7,10 +7,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/login"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prompt"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/server"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/update"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version"
 )
+
+// runningVersion asks a dashboard which version it runs (replaced in tests).
+var runningVersion = func(ctx context.Context, url string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return client.New(url, "").Health(ctx)
+}
 
 // installation is an existing dashboard found on a Cloudflare account.
 type installation struct {
@@ -100,6 +110,16 @@ func serverUpdate(ctx context.Context, p *prompt.Prompter, factory CloudflareFac
 	inst, err := findInstallation(ctx, p, factory, "Updating the dashboard")
 	if err != nil {
 		return err
+	}
+	// Never replace a newer dashboard with this program's older one: its
+	// database may already have changes the older dashboard doesn't know.
+	if len(inst.domains) > 0 {
+		if running, err := runningVersion(ctx, inst.address()); err == nil {
+			if c, ok := update.Compare(running, version.Version); ok && c > 0 {
+				return fmt.Errorf("the dashboard runs ccunified %s, which is newer than this program (%s). "+
+					"Run ccunified update first, then ccunified server update again", running, version.Version)
+			}
+		}
 	}
 	p.Printf("\nUpdating the dashboard at %s (account %q)\n", inst.address(), inst.account.Name)
 	applied, err := server.ApplyMigrations(ctx, inst.cf.D1(inst.account.ID, inst.databaseID), migrations)

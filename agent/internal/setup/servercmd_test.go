@@ -3,17 +3,20 @@ package setup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prompt"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/server"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/server/d1test"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version"
 )
 
 func existingInstall(t *testing.T) (*fakeCF, CloudflareFactory) {
 	t.Helper()
 	cf := &fakeCF{t: t, goodToken: "tok", existingDB: true, db: d1test.New(t)}
+	setRunningVersion(t, "", errors.New("not reachable in tests"))
 	ctx := context.Background()
 	migrations, _ := testAssets(t).Migrations()
 	if _, err := server.ApplyMigrations(ctx, cf.db, migrations[:0]); err != nil { // only the bookkeeping table
@@ -81,5 +84,42 @@ func TestServerCommandsFindNoDashboard(t *testing.T) {
 	err := ServerRemove(context.Background(), prompt.New(strings.NewReader("tok\n"), &bytes.Buffer{}), factory)
 	if err == nil || !strings.Contains(err.Error(), "no ccunified dashboard was found") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func setRunningVersion(t *testing.T, v string, err error) {
+	t.Helper()
+	old := runningVersion
+	runningVersion = func(context.Context, string) (string, error) { return v, err }
+	t.Cleanup(func() { runningVersion = old })
+}
+
+func setProgramVersion(t *testing.T, v string) {
+	t.Helper()
+	old := version.Version
+	version.Version = v
+	t.Cleanup(func() { version.Version = old })
+}
+
+// An older program must not replace a newer dashboard.
+func TestServerUpdateRefusesToDowngrade(t *testing.T) {
+	cf, factory := existingInstall(t)
+	setProgramVersion(t, "0.1.0")
+	setRunningVersion(t, "0.1.1", nil)
+	out := &bytes.Buffer{}
+	err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t))
+	if err == nil || !strings.Contains(err.Error(), "newer than this program (0.1.0)") {
+		t.Fatalf("got %v\n%s", err, out)
+	}
+	if cf.uploaded != nil {
+		t.Error("the older dashboard was uploaded")
+	}
+
+	// The same or an older running version is updated as usual.
+	for _, running := range []string{"0.1.0", "0.0.9"} {
+		setRunningVersion(t, running, nil)
+		if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
+			t.Fatalf("running %s: %v\n%s", running, err, out)
+		}
 	}
 }

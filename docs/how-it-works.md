@@ -101,7 +101,8 @@ The background sync runs `ccunified sync --quiet` on schedule:
    transaction. Rows that didn't change aren't rewritten, so sending the same
    day again never counts it twice and costs almost no database writes.
 6. **The reply** carries the dashboard's time zone and the newest released
-   version. If the machine used an outdated time zone, the Worker refuses the
+   version. The dashboard asks GitHub for that every 6 hours, and learns it
+   sooner when a machine uploads with a newer release than it knows of. If the machine used an outdated time zone, the Worker refuses the
    upload (`409 timezone_mismatch`); the machine switches to the new zone and
    uploads its whole history again.
 7. Failed uploads are retried up to 6 times, waiting 1, 2, 4, 8 and 16 seconds

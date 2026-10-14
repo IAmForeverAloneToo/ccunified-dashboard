@@ -234,3 +234,45 @@ describe("refusals", () => {
     expect(res.headers.get("retry-after")).toBe("1");
   });
 });
+
+describe("learning about new releases from machines", () => {
+  const known = async () => {
+    const [row] = await w.sql("SELECT value FROM settings WHERE key = 'latest_version'");
+    return (row?.value as string | undefined) ?? null;
+  };
+  const withVersion = (version: string) => payload({ agent: { ...payload().agent, version } });
+
+  test("a machine on a newer release raises the latest known version", async () => {
+    await w.sql("DELETE FROM settings WHERE key = 'latest_version'");
+    const viewer = await w.createUser();
+    const fresh = await w.createMachine({ name: "fresh" });
+    const res = await upload(fresh.token, withVersion("0.9.1"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ latest_version: "0.9.1" });
+    expect(await known()).toBe("0.9.1");
+
+    // A machine on an older release doesn't lower it, and is told to update.
+    const behind = await w.createMachine({ name: "behind" });
+    expect(await (await upload(behind.token, withVersion("0.8.0"))).json()).toMatchObject({
+      latest_version: "0.9.1",
+    });
+    expect(await known()).toBe("0.9.1");
+    const list = (await (await w.fetch("/api/machines", { cookie: viewer.cookie })).json()) as {
+      latest_version: string;
+      machines: { name: string; update_available: boolean }[];
+    };
+    expect(list.latest_version).toBe("0.9.1");
+    expect(list.machines.find((m) => m.name === "behind")?.update_available).toBe(true);
+    expect(list.machines.find((m) => m.name === "fresh")?.update_available).toBe(false);
+  });
+
+  test("pre-releases and development builds don't count", async () => {
+    await w.sql("DELETE FROM settings WHERE key = 'latest_version'");
+    const m = await w.createMachine();
+    for (const version of ["9.0.0-rc.1", "0.0.0-ci.42", "9.0.0+build.7", "dev"]) {
+      await allowNextUpload(m.id);
+      expect((await upload(m.token, withVersion(version))).status).toBe(200);
+    }
+    expect(await known()).toBeNull();
+  });
+});

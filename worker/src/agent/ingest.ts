@@ -3,7 +3,7 @@ import type { AppEnv } from "../env";
 import { IngestPayload, LIMITS, SOURCES } from "../ingest/schema";
 import { fail, readJson } from "../lib/http";
 import { bumpDataVersion, getSettings } from "../lib/settings";
-import { latestVersion } from "../lib/updates";
+import { latestVersion, learnLatestVersion, pickLatest } from "../lib/updates";
 import { SERVER_VERSION } from "../version";
 
 /** Uploads from one machine closer together than this are refused (backfills wait and retry). */
@@ -45,6 +45,7 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
   const keep = rows.map((r) => `${r.source}|${r.day}|${r.model}`);
   const db = c.env.DB;
   const a = payload.agent;
+  const learned = learnLatestVersion(db, settings, a.version);
 
   const [, deleted, upserted] = await db.batch([
     db
@@ -93,6 +94,7 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
              OR usage_daily.cost_usd IS NOT excluded.cost_usd`,
       )
       .bind(machine.id, now, JSON.stringify(rows)),
+    ...(learned ? [learned] : []),
   ]);
 
   const changed = (deleted?.meta.changes ?? 0) + (upserted?.meta.changes ?? 0);
@@ -103,6 +105,9 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
     changed_rows: changed,
     timezone: settings.timezone,
     server_version: SERVER_VERSION,
-    latest_version: latestVersion(db, settings, c.executionCtx),
+    latest_version: pickLatest(
+      latestVersion(db, settings, c.executionCtx),
+      learned ? a.version : null,
+    ),
   });
 }

@@ -130,6 +130,21 @@ and catches up on its own once it's back. Otherwise:
 - **Linux** stops syncing when you log out unless lingering is on; see
   [Add machines](adding-machines.md#linux-keep-syncing-while-logged-out).
 
+## Updating
+
+**Settings still shows the old version after `ccunified update`.** Settings
+shows the version of the dashboard on Cloudflare, which only
+`ccunified server update` changes; `ccunified update` updates the program on a
+machine. Run `ccunified server update` on a machine you've already updated.
+
+**"the dashboard runs ccunified …, which is newer than this program"**: you
+ran `ccunified server update` on a machine with an older ccunified. Run
+`ccunified update` there first.
+
+**A new release isn't shown as available yet.** The dashboard checks GitHub
+for new releases every 6 hours, and also learns about one as soon as any of
+your machines uploads with it.
+
 ## Numbers look different from elsewhere
 
 - **Costs are estimates** at Anthropic's API prices, calculated by ccusage. A
