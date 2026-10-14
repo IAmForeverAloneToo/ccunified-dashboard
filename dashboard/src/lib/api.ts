@@ -103,6 +103,16 @@ export interface Summary {
   by_day_source: (Totals & { day: string; source: string })[];
   /** Each machine's usage per tool over the whole period. */
   by_machine_source: (Totals & { machine_id: string; source: string })[];
+  /** Every row, when asked for with detail=1 (see filters.ts). */
+  detail?: SummaryDetail;
+}
+
+/** Rows of usage: [day, machine, tool, model, input, output, cache write, cache read, cost]; the middle three index the lists. */
+export interface SummaryDetail {
+  machines: string[];
+  sources: string[];
+  models: string[];
+  rows: [string, number, number, number, number, number, number, number, number][];
 }
 
 export interface Machine {

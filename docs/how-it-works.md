@@ -178,8 +178,8 @@ learns of a release as soon as a machine uploads while running it.
 | `GET /api/login-params`, `POST /api/login`, `POST /api/logout` | Log in (with the salt the browser needs to derive the login key) and out | anyone |
 | `GET /api/me`, `POST /api/me/password` | Who's logged in; change your password | any user |
 | `POST /api/me/2fa/setup`, `…/enable`, `…/disable`, `…/recovery-codes` | Two-factor login | any user |
-| `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine, by model and by tool, and each machine's usage per tool | viewer |
-| `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker) | viewer |
+| `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine, by model and by tool, and each machine's usage per tool; with `detail=1`, every row (day, machine, tool, model), which the Overview filters in the browser | viewer |
+| `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker), optionally only for some machines, tools and models (repeated `machine`, `source`, `model`) | viewer |
 | `GET /api/machines` | Machines, their status and the tools each has reported | viewer |
 | `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
 | `GET /api/pairing`, `POST /api/pairing/approve`, `POST /api/pairing/deny` | Machines waiting to join | admin |

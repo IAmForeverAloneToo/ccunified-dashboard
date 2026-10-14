@@ -11,8 +11,18 @@ import { type Column, legend, renderColumns, type Series } from "../lib/chart";
 import { rangePicker } from "../lib/daterange";
 import { daysInclusive, formatRange, isDate, MAX_RANGE_DAYS } from "../lib/dates";
 import { type Child, fill, h, s, segmented } from "../lib/dom";
+import {
+  allowedModels,
+  applyFilters,
+  type Filters,
+  isFiltered,
+  noFilters,
+  readFilters,
+  writeFilters,
+} from "../lib/filters";
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
 import { familySeries, modelFamily } from "../lib/models";
+import { type Choice, type MultiSelect, multiSelect } from "../lib/multiselect";
 import { seriesOf } from "../lib/series";
 import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
@@ -204,6 +214,7 @@ export async function overviewPage(ctx: PageContext) {
     split: readChoice(ctx.query, "by", SPLITS, "machine"),
     measure: readChoice(ctx.query, "measure", MEASURES, "tokens"),
     tableView: false,
+    filters: readFilters(ctx.query),
   };
 
   const banners = h("div", { class: "stack" });
@@ -241,6 +252,8 @@ export async function overviewPage(ctx: PageContext) {
     splitFilter,
     segmented("measure", "Show", MEASURES, state.measure, (v) => update({ measure: v })),
   );
+  // Machines, Tools and Models dropdowns, filled in once the data is known.
+  const limits = h("div", { class: "filters", role: "group", "aria-label": "Limit to" });
 
   ctx.main.append(
     h(
@@ -249,6 +262,7 @@ export async function overviewPage(ctx: PageContext) {
       h("div", null, h("h1", null, "Overview"), h("p", { id: "tz-note" }, "")),
     ),
     filters,
+    limits,
     banners,
     tiles,
     h(
@@ -271,6 +285,92 @@ export async function overviewPage(ctx: PageContext) {
   let summary: Summary | undefined;
   let machines: Machine[] = [];
   let pending: PairingRequest[] = [];
+
+  // ---------- Filters: limit everything to some machines, tools and models ----------
+
+  /** Ids in a list, then any others seen in the data or the filters, once each. */
+  const known = (first: string[], ...more: string[][]) => [...new Set([...first, ...more.flat()])];
+  const knownTools = () =>
+    known(summary?.tools ?? [], summary?.detail?.sources ?? [], state.filters.tools);
+  const knownModels = () =>
+    known(summary?.models ?? [], summary?.detail?.models ?? [], state.filters.models);
+
+  function setFilters(change: Partial<Filters>, push: boolean) {
+    state.filters = { ...state.filters, ...change };
+    writeUrl(push);
+    draw();
+  }
+
+  const machineSelect = multiSelect({
+    label: "Machines",
+    allLabel: "All machines",
+    choices: () =>
+      machines.map((m) => ({
+        id: m.id,
+        label: m.name,
+        note: m.revoked_at !== null ? "revoked" : undefined,
+      })),
+    selected: () => new Set(state.filters.machines),
+    onChange: (next, first) => setFilters({ machines: [...next] }, first),
+  });
+  const toolSelect = multiSelect({
+    label: "Tools",
+    allLabel: "All tools",
+    choices: () => knownTools().map((id) => ({ id, label: toolName(id) })),
+    selected: () => new Set(state.filters.tools),
+    onChange: (next, first) => setFilters({ tools: [...next] }, first),
+  });
+  // Model families, each with its models: f:<family> and m:<model>.
+  const modelSelect = multiSelect({
+    label: "Models",
+    allLabel: "All models",
+    choices: () => {
+      const families = new Map<string, Choice & { children: Choice[] }>();
+      for (const m of knownModels()) {
+        const f = modelFamily(m);
+        const family = families.get(f.id) ?? { id: `f:${f.id}`, label: f.label, children: [] };
+        family.children.push({ id: `m:${m}`, label: m });
+        families.set(f.id, family);
+      }
+      return [...families.values()];
+    },
+    selected: () =>
+      new Set([
+        ...state.filters.families.map((f) => `f:${f}`),
+        ...state.filters.models.map((m) => `m:${m}`),
+      ]),
+    onChange: (next, first) => {
+      const picked = (prefix: string) =>
+        [...next].filter((x) => x.startsWith(prefix)).map((x) => x.slice(prefix.length));
+      setFilters({ families: picked("f:"), models: picked("m:") }, first);
+    },
+  });
+  const selects: MultiSelect[] = [machineSelect, toolSelect, modelSelect];
+  const clearFilters = h(
+    "button",
+    {
+      type: "button",
+      class: "small",
+      onclick: () => {
+        setFilters(noFilters(), true);
+        machineSelect.element.querySelector("button")?.focus();
+      },
+    },
+    "Clear filters",
+  );
+  limits.append(machineSelect.element, toolSelect.element, modelSelect.element, clearFilters);
+
+  /** Shows the dropdowns that have something to choose from, and Clear when any filter is on. */
+  function paintLimits() {
+    const f = state.filters;
+    machineSelect.element.hidden = machines.length < 2 && f.machines.length === 0;
+    toolSelect.element.hidden = knownTools().length < 2 && f.tools.length === 0;
+    modelSelect.element.hidden =
+      knownModels().length < 2 && f.families.length === 0 && f.models.length === 0;
+    clearFilters.hidden = !isFiltered(f);
+    limits.hidden = selects.every((x) => x.element.hidden) && clearFilters.hidden;
+    for (const x of selects) x.refresh();
+  }
 
   tableToggle.addEventListener("click", () => {
     state.tableView = !state.tableView;
@@ -296,12 +396,8 @@ export async function overviewPage(ctx: PageContext) {
     }
   }
 
-  function update(change: Partial<typeof state>) {
-    Object.assign(state, change);
-    if (state.range !== "custom") {
-      state.from = "";
-      state.to = "";
-    }
+  /** Puts the page's state in its address; `push` makes a new history entry for Back. */
+  function writeUrl(push: boolean) {
     const q = new URLSearchParams({ range: state.range });
     if (state.range === "custom") {
       q.set("from", state.from);
@@ -309,9 +405,19 @@ export async function overviewPage(ctx: PageContext) {
     }
     q.set("by", state.split);
     q.set("measure", state.measure);
-    // A new period gets its own history entry, so Back returns to the last one.
-    if (change.range) history.pushState(null, "", `/?${q}`);
+    writeFilters(q, state.filters);
+    if (push) history.pushState(null, "", `/?${q}`);
     else history.replaceState(null, "", `/?${q}`);
+  }
+
+  function update(change: Partial<typeof state>) {
+    Object.assign(state, change);
+    if (state.range !== "custom") {
+      state.from = "";
+      state.to = "";
+    }
+    // A new period gets its own history entry, so Back returns to the last one.
+    writeUrl(change.range !== undefined);
     paintPeriod();
     if (change.range) void load();
     else draw();
@@ -329,8 +435,14 @@ export async function overviewPage(ctx: PageContext) {
           : { from: addDays(today(), -29), to: today() },
     today,
     timezone: () => summary?.timezone ?? "",
-    usageDays: (from, to) =>
-      getCached<{ days: string[] }>(`/usage-days?from=${from}&to=${to}`).then((r) => r.days),
+    usageDays: (from, to) => {
+      // The dots follow the filters too.
+      const q = new URLSearchParams({ from, to });
+      for (const m of state.filters.machines) q.append("machine", m);
+      for (const t of state.filters.tools) q.append("source", t);
+      for (const m of allowedModels(state.filters, knownModels()) ?? []) q.append("model", m);
+      return getCached<{ days: string[] }>(`/usage-days?${q}`).then((r) => r.days);
+    },
     onApply: (from, to) => update({ range: "custom", from, to }),
   });
   paintPeriod();
@@ -340,8 +452,8 @@ export async function overviewPage(ctx: PageContext) {
     try {
       const path =
         state.range === "custom"
-          ? `/summary?from=${state.from}&to=${state.to}`
-          : `/summary?days=${state.range === "all" ? ALL_DAYS : Number(state.range)}`;
+          ? `/summary?from=${state.from}&to=${state.to}&detail=1`
+          : `/summary?days=${state.range === "all" ? ALL_DAYS : Number(state.range)}&detail=1`;
       const [s, m, p] = await Promise.all([
         getCached<Summary>(path),
         api<MachinesResponse>("/machines"),
@@ -359,15 +471,17 @@ export async function overviewPage(ctx: PageContext) {
   }
 
   function draw() {
+    paintLimits();
     if (!summary) return;
-    const s = summary;
+    const all = summary;
+    const s = applyFilters(all, state.filters);
     const tzNote = document.querySelector("#tz-note");
     if (tzNote) {
       const period =
         s.from === s.to ? day(s.to, "long") : `${day(s.from, "long")} – ${day(s.to, "long")}`;
       tzNote.textContent = `${period} · days in ${s.timezone}`;
     }
-    const multiTool = s.tools.length > 1 || new Set(s.by_day_source.map((r) => r.source)).size > 1;
+    const multiTool = knownTools().length > 1;
     if (toolOption) toolOption.hidden = !multiTool && state.split !== "tool";
     toolsCard.hidden = !multiTool;
     drawBanners();
@@ -419,7 +533,11 @@ export async function overviewPage(ctx: PageContext) {
   function drawTiles(s: Summary, multiTool: boolean) {
     const total = emptyTotals();
     for (const r of s.by_day_machine) addInto(total, r);
-    const active = machines.filter((m) => m.revoked_at === null);
+    const active = machines.filter(
+      (m) =>
+        m.revoked_at === null &&
+        (state.filters.machines.length === 0 || state.filters.machines.includes(m.id)),
+    );
     const ok = active.filter((m) => m.status === "ok").length;
     const late = active.filter((m) => m.status === "late").length;
     const tile = (label: string, value: string, note: string) =>
@@ -530,10 +648,24 @@ export async function overviewPage(ctx: PageContext) {
                 h("span", null, "Install ccunified on a machine and approve it to see usage here."),
                 h("a", { href: "/machines" }, "How to add a machine"),
               ]
-            : [
-                h("strong", null, "No usage in this period"),
-                h("span", null, "Try a longer period."),
-              ],
+            : isFiltered(state.filters)
+              ? [
+                  h("strong", null, "Nothing matches these filters in this period"),
+                  h("span", null, "Try a longer period, or other filters."),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "small",
+                      onclick: () => setFilters(noFilters(), true),
+                    },
+                    "Clear filters",
+                  ),
+                ]
+              : [
+                  h("strong", null, "No usage in this period"),
+                  h("span", null, "Try a longer period."),
+                ],
         ),
       );
       return;
@@ -775,5 +907,6 @@ export async function overviewPage(ctx: PageContext) {
     window.clearInterval(timer);
     resize.disconnect();
     removePicker();
+    for (const x of selects) x.destroy();
   };
 }

@@ -74,12 +74,15 @@ go vet ./... && go test ./...
   the Worker and the Go program; see [its README](../schema/examples/README.md).
   The Worker tests also apply each migration to a database from the previous
   release.
-- **Dashboard:** unit tests for the date logic and the tool names and colors
+- **Dashboard:** unit tests for the date logic, filters, model families and the tool names and colors
   (`dashboard/src/lib/*.test.ts`, part of `npm test`), and browser tests
   (`npm run test:browser`) in Chrome and Firefox against the demo data: the
   date range picker (mouse, keyboard, typed dates, shortcuts, cancelling,
   future days, usage dots, reload and Back, phone layout, totals matching the
-  API), splitting by tool, and the Machines page's tools.
+  API), splitting by tool, model families and their colors, the filters
+  (each one, combined, families and exact models, reload and Back, the
+  keyboard, the date picker's dots, phone width), the Settings page's update
+  check, and the Machines page's tools.
 - **Login keys:** `schema/test-vectors/login-kdf.json` holds password-to-key
   results that the browser code, the Worker tests and the Go program must all
   reproduce.

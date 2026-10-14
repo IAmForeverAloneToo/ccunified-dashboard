@@ -397,7 +397,8 @@ label {
   font-size: 0.85rem;
 }
 
-input,
+/* Text fields and lists; checkboxes and radio buttons keep the browser's look. */
+input:not([type="checkbox"], [type="radio"]),
 select {
   font: inherit;
   color: var(--ink);
@@ -409,7 +410,7 @@ select {
   width: 100%;
 }
 
-input:focus-visible,
+input:not([type="checkbox"], [type="radio"]):focus-visible,
 select:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 0;
@@ -485,7 +486,8 @@ button[aria-disabled="true"] {
   cursor: progress;
 }
 
-button.small {
+button.small,
+.button.small {
   min-height: 30px;
   padding: 4px 10px;
   font-size: 0.85rem;
@@ -581,6 +583,125 @@ button.small {
 
 .range-button svg {
   flex: none;
+}
+
+/* ---------- Filter dropdowns (multiselect.ts) ---------- */
+
+.ms-button {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink-2);
+  border-radius: 9px;
+  padding: 5px 10px 5px 12px;
+  min-height: 0;
+  height: 34px;
+  max-width: 260px;
+}
+
+.ms-button.active {
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.ms-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ms-caret {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.ms {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 8px;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.ms ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ms-list > ul {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.ms-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.ms-option:hover {
+  background: var(--surface-2);
+}
+
+.ms-option span:first-of-type {
+  overflow-wrap: anywhere;
+}
+
+.ms-option input {
+  margin: 0;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.ms-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.ms-parent {
+  display: flex;
+  align-items: center;
+}
+
+button.ms-expand {
+  border: none;
+  background: none;
+  min-height: 0;
+  height: 28px;
+  width: 28px;
+  padding: 0;
+  color: var(--muted);
+  flex: none;
+}
+
+.ms-chevron {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.ms-expand[aria-expanded="true"] .ms-chevron {
+  transform: rotate(90deg);
+}
+
+.ms ul.ms-children {
+  padding-left: 22px;
 }
 
 /* ---------- Stat tiles ---------- */

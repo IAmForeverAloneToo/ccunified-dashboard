@@ -208,6 +208,42 @@ describe("summary", () => {
     expect(tools[b.id]).toEqual(["codex"]);
   });
 
+  test("detail=1 adds every row, for filtering in the browser", async () => {
+    // The rows uploaded by the previous test.
+    const res = await w.fetch("/api/summary?from=2026-08-01&to=2026-08-02&detail=1", {
+      cookie: viewer.cookie,
+    });
+    const body = (await res.json()) as {
+      detail: {
+        machines: string[];
+        sources: string[];
+        models: string[];
+        rows: [string, number, number, number, number, number, number, number, number][];
+      };
+    };
+    const { machines, sources, models, rows } = body.detail;
+    const readable = rows
+      .map(([day, m, s, k, input]) => `${day} ${machines[m]} ${sources[s]} ${models[k]} ${input}`)
+      .sort();
+    const [a, b] = machines.length === 2 ? machines : ["", ""];
+    expect(new Set(machines).size).toBe(2);
+    expect(readable).toEqual(
+      [
+        `2026-08-01 ${a} claude opus 10`,
+        `2026-08-01 ${a} codex gpt-5.5 3`,
+        `2026-08-02 ${a} codex gpt-5.5 2`,
+        `2026-08-02 ${b} codex gpt-5.5 1`,
+      ].sort(),
+    );
+    expect(rows[0]).toHaveLength(9);
+    // Without detail, no rows; and the two answers aren't confused by caching.
+    const plain = await w.fetch("/api/summary?from=2026-08-01&to=2026-08-02", {
+      cookie: viewer.cookie,
+    });
+    expect(await plain.json()).not.toHaveProperty("detail");
+    expect(plain.headers.get("etag")).not.toBe(res.headers.get("etag"));
+  });
+
   test("defaults to the last 30 days in the dashboard's time zone", async () => {
     const res = await w.fetch("/api/summary", { cookie: viewer.cookie });
     const body = (await res.json()) as {
@@ -320,6 +356,66 @@ describe("usage days", () => {
       headers: { "if-none-match": res.headers.get("etag") ?? "" },
     });
     expect(again.status).toBe(304);
+  });
+
+  test("can be limited to machines, tools and models", async () => {
+    const a = await w.createMachine({ name: "days-a" });
+    const b = await w.createMachine({ name: "days-b" });
+    const up = (token: string, days: unknown[]) =>
+      w.fetch(
+        "/agent/ingest",
+        jsonInit(
+          "POST",
+          payload({
+            schema_version: 2,
+            sources: ["claude", "kimi"],
+            range: { from: "2024-05-01", to: "2024-05-05" },
+            days,
+          }),
+          { headers: { authorization: `Bearer ${token}` } },
+        ),
+      );
+    await up(a.token, [
+      { date: "2024-05-01", source: "claude", models: [model("claude-opus-5-5", 1, 0.1)] },
+      { date: "2024-05-02", source: "kimi", models: [model("k3", 1, 0.1)] },
+    ]);
+    await up(b.token, [
+      { date: "2024-05-03", source: "kimi", models: [model("k3", 1, 0.1)] },
+      { date: "2024-05-04", source: "claude", models: [model("claude-mythos-5-1", 1, 0.1)] },
+    ]);
+    const days = async (filters: string) =>
+      (
+        (await (
+          await w.fetch(`/api/usage-days?from=2024-05-01&to=2024-05-31${filters}`, {
+            cookie: viewer.cookie,
+          })
+        ).json()) as { days: string[] }
+      ).days;
+    expect(await days("")).toEqual(["2024-05-01", "2024-05-02", "2024-05-03", "2024-05-04"]);
+    expect(await days(`&machine=${a.id}`)).toEqual(["2024-05-01", "2024-05-02"]);
+    expect(await days("&source=kimi")).toEqual(["2024-05-02", "2024-05-03"]);
+    expect(await days(`&source=kimi&machine=${b.id}`)).toEqual(["2024-05-03"]);
+    expect(await days("&model=claude-opus-5-5&model=claude-mythos-5-1")).toEqual([
+      "2024-05-01",
+      "2024-05-04",
+    ]);
+    // Different filters are cached separately.
+    const all = await w.fetch("/api/usage-days?from=2024-05-01&to=2024-05-31", {
+      cookie: viewer.cookie,
+    });
+    const kimi = await w.fetch("/api/usage-days?from=2024-05-01&to=2024-05-31&source=kimi", {
+      cookie: viewer.cookie,
+      headers: { "if-none-match": all.headers.get("etag") ?? "" },
+    });
+    expect(kimi.status).toBe(200);
+    const tooMany = Array.from({ length: 501 }, (_, i) => `model=m${i}`).join("&");
+    expect(
+      (
+        await w.fetch(`/api/usage-days?from=2024-05-01&to=2024-05-31&${tooMany}`, {
+          cookie: viewer.cookie,
+        })
+      ).status,
+    ).toBe(400);
   });
 
   test.each([

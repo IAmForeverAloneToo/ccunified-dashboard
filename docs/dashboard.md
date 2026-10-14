@@ -37,6 +37,8 @@ The overview answers "how much did I use my coding tools, and where":
   has reported usage).
 - **Show:** all tokens (input, output and cache), output tokens only, or
   estimated cost.
+- **Machines, Tools, Models:** limit the whole page to some of them (see
+  [Filtering](#filtering-to-some-machines-tools-or-models)).
 - **Totals** for the period: tokens (with how many were cache reads), output
   tokens, estimated cost, and how many machines are reporting on schedule.
 - **Chart:** one column per day (per week or month for long periods), stacked
@@ -76,6 +78,30 @@ Click **Custom** next to the period buttons:
 - **With the keyboard:** the arrow keys move by day and week, Page Up and Page
   Down by month (with Shift, by year), Home and End to the start and end of
   the week, and Enter picks a day.
+
+### Filtering to some machines, tools or models
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/filters-dark.png">
+  <img alt="The Models filter open under the period controls: model families with checkboxes, Kimi ticked, and Sonnet expanded to show its two models with only anthropic/claude-sonnet-5-5 ticked" src="images/filters-light.png">
+</picture>
+
+**Machines**, **Tools** and **Models**, under the period, limit everything on
+the page to what you tick: the totals, the chart, the tables and the date
+picker's dots.
+
+- Tick one or more; **All**, the default, turns that filter off. Filters
+  combine: Tools *Kimi* with Machines *Home PC* shows Kimi's usage on Home PC.
+- **Models** lists model families (Opus, GPT, Kimi, …). Ticking a family
+  includes all of its models, also ones that show up later; click ▸ to pick
+  exact models instead (the family then shows as partly ticked).
+- **Clear filters** turns them all off.
+- The address includes the filters, so they survive a reload and can be
+  bookmarked or shared; **Back** undoes the changes made while a list was
+  open.
+- Each list appears once there's more than one thing to pick from.
+- With the keyboard: Tab to a list's button and press Enter, Tab between the
+  checkboxes and press Space to tick, and Escape to close.
 
 ### Tools and models
 

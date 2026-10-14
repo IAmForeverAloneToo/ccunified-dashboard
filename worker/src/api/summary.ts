@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
+import { sha256Hex } from "../lib/crypto";
 import { fail } from "../lib/http";
 import { getSettings } from "../lib/settings";
 import { addDays, daysBetween, todayIn } from "../lib/time";
@@ -12,7 +13,30 @@ const Query = z.object({
   to: z.iso.date().optional(),
   /** Last N days ending today (in the dashboard's time zone); ignored if `from` is given. */
   days: z.coerce.number().int().min(1).max(MAX_SPAN_DAYS).optional(),
+  /** detail=1 adds every row (day, machine, tool, model), for filtering in the browser. */
+  detail: z.literal("1").optional(),
 });
+
+/** A row of `detail`: [day, machine, tool, model, input, output, cache write, cache read, cost]. */
+type DetailRow = [string, number, number, number, number, number, number, number, number];
+
+/** Gives each distinct value a small number, so repeated ids aren't repeated in the answer. */
+function indexer() {
+  const list: string[] = [];
+  const at = new Map<string, number>();
+  return {
+    list,
+    of(value: string): number {
+      let i = at.get(value);
+      if (i === undefined) {
+        i = list.length;
+        list.push(value);
+        at.set(value, i);
+      }
+      return i;
+    },
+  };
+}
 
 interface Totals {
   input_tokens: number;
@@ -70,7 +94,8 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     fail(400, "invalid_request", { message: `at most ${MAX_SPAN_DAYS} days` });
   }
 
-  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}"`;
+  const detail = query.data.detail === "1";
+  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}${detail ? ":detail" : ""}"`;
   if (c.req.header("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { etag } });
   }
@@ -115,6 +140,30 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     machineSource.set(ms, u);
   }
 
+  let detailBody: object | undefined;
+  if (detail) {
+    const machinesIx = indexer();
+    const sourcesIx = indexer();
+    const modelsIx = indexer();
+    const rows: DetailRow[] = results.map((r) => [
+      r.day,
+      machinesIx.of(r.machine_id),
+      sourcesIx.of(r.source),
+      modelsIx.of(r.model),
+      r.input_tokens,
+      r.output_tokens,
+      r.cache_creation_tokens,
+      r.cache_read_tokens,
+      r.cost_usd,
+    ]);
+    detailBody = {
+      machines: machinesIx.list,
+      sources: sourcesIx.list,
+      models: modelsIx.list,
+      rows,
+    };
+  }
+
   return c.json(
     {
       timezone: settings.timezone,
@@ -129,6 +178,7 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
       by_day_model: [...byModel.values()],
       by_day_source: [...bySource.values()],
       by_machine_source: [...machineSource.values()],
+      ...(detailBody ? { detail: detailBody } : {}),
     },
     200,
     { etag },
@@ -137,10 +187,14 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
 
 const DaysQuery = z.object({ from: z.iso.date(), to: z.iso.date() });
 
+/** Repeated filter parameters: at most 500 values of at most 200 characters each. */
+const FilterList = z.array(z.string().min(1).max(200)).max(500);
+
 /**
  * GET /api/usage-days?from=YYYY-MM-DD&to=YYYY-MM-DD — the days in the range
- * that have any usage, for marking them in the date picker. Cached like the
- * summary.
+ * that have any usage, for marking them in the date picker. Repeated
+ * `machine`, `source` and `model` parameters limit it to those machines,
+ * tools and models, like the Overview's filters. Cached like the summary.
  */
 export async function usageDays(c: Context<AppEnv>): Promise<Response> {
   const query = DaysQuery.safeParse(c.req.query());
@@ -150,9 +204,22 @@ export async function usageDays(c: Context<AppEnv>): Promise<Response> {
   if (daysBetween(from, to) > MAX_SPAN_DAYS) {
     fail(400, "invalid_request", { message: `at most ${MAX_SPAN_DAYS} days` });
   }
+  const filters = z
+    .object({ machine: FilterList, source: FilterList, model: FilterList })
+    .safeParse({
+      machine: c.req.queries("machine") ?? [],
+      source: c.req.queries("source") ?? [],
+      model: c.req.queries("model") ?? [],
+    });
+  if (!filters.success) fail(400, "invalid_request", { message: "too many or too long filters" });
+  const list = (values: string[]) => (values.length > 0 ? JSON.stringify(values) : null);
+  const machines = list(filters.data.machine);
+  const sources = list(filters.data.source);
+  const models = list(filters.data.model);
 
   const settings = await getSettings(c.env.DB);
-  const etag = `W/"days:${settings.dataVersion}:${settings.timezone}:${from}:${to}"`;
+  const filterKey = await sha256Hex(JSON.stringify([machines, sources, models]));
+  const etag = `W/"days:${settings.dataVersion}:${settings.timezone}:${from}:${to}:${filterKey.slice(0, 16)}"`;
   if (c.req.header("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { etag } });
   }
@@ -161,9 +228,12 @@ export async function usageDays(c: Context<AppEnv>): Promise<Response> {
        FROM usage_daily
       WHERE day BETWEEN ?1 AND ?2
         AND input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens > 0
+        AND (?3 IS NULL OR machine_id IN (SELECT value FROM json_each(?3)))
+        AND (?4 IS NULL OR source IN (SELECT value FROM json_each(?4)))
+        AND (?5 IS NULL OR model IN (SELECT value FROM json_each(?5)))
       ORDER BY day`,
   )
-    .bind(from, to)
+    .bind(from, to, machines, sources, models)
     .all<{ day: string }>();
   return c.json({ days: results.map((r) => r.day) }, 200, { etag });
 }

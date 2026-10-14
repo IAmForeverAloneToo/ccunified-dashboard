@@ -299,6 +299,16 @@ test.describe("on a phone", () => {
     await dialog.getByRole("button", { name: "Apply" }).click();
     await expect(page).toHaveURL(/range=custom/);
   });
+
+  test("filter lists fit on the screen", async ({ page }) => {
+    await logIn(page);
+    await page.getByRole("button", { name: /^Models / }).click();
+    const list = page.getByRole("dialog", { name: "Filter by models" });
+    await expect(list).toBeVisible();
+    const box = await list.boundingBox();
+    expect(box?.x).toBeGreaterThanOrEqual(8);
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390 - 8);
+  });
 });
 
 test.describe("tools other than Claude Code", () => {
@@ -447,4 +457,190 @@ test("model families keep their colors in every period", async ({ page }) => {
       expect(color, `${family} in ${range} days`).toBe(ninety[family]);
     }
   }
+});
+
+test.describe("filters", () => {
+  const filterButton = (page: Page, name: string) =>
+    page.getByRole("button", { name: new RegExp(`^${name} `) });
+  const openFilter = async (page: Page, name: string) => {
+    await filterButton(page, name).click();
+    const list = page.getByRole("dialog", { name: `Filter by ${name.toLowerCase()}` });
+    await expect(list).toBeVisible();
+    return list;
+  };
+  /** All tokens in the last 30 days, from the API, for rows the test picks. */
+  const apiTokens30 = (page: Page, by: "machine" | "source" | "model", keep: string[]) =>
+    page.evaluate(
+      async ([key, values]) => {
+        const s = await (await fetch("/api/summary?days=30")).json();
+        const rows =
+          key === "machine"
+            ? s.by_day_machine
+            : key === "source"
+              ? s.by_day_source
+              : s.by_day_model;
+        const field = key === "machine" ? "machine_id" : key;
+        let total = 0;
+        for (const r of rows) {
+          if ((values as string[]).includes(r[field])) {
+            total +=
+              r.input_tokens + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens;
+          }
+        }
+        return total;
+      },
+      [by, keep] as const,
+    );
+  const machineId = (page: Page, name: string) =>
+    page.evaluate(
+      async (n) =>
+        (await (await fetch("/api/machines")).json()).machines.find(
+          (m: { name: string }) => m.name === n,
+        ).id as string,
+      name,
+    );
+
+  test("pick tools and machines; totals follow; reload and Back keep up", async ({ page }) => {
+    await logIn(page);
+    await expect(filterButton(page, "Tools")).toHaveText(/All/);
+
+    let list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Kimi" }).check();
+    await expect(page).toHaveURL(/tool=kimi/);
+    await expect(list.getByRole("checkbox", { name: "All tools" })).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    await expect(list).toBeHidden();
+    await expect(filterButton(page, "Tools")).toBeFocused();
+    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
+    await expect(tile(page, "Tokens")).toHaveText(
+      compact(await apiTokens30(page, "source", ["kimi"])),
+    );
+
+    // Machines too: both filters apply.
+    list = await openFilter(page, "Machines");
+    await list.getByRole("checkbox", { name: "Office PC" }).check();
+    await list.getByRole("checkbox", { name: "Home PC" }).check();
+    await page.mouse.click(5, 5);
+    await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
+    const home = await machineId(page, "Home PC");
+    const both = await page.evaluate(
+      async ([id]) => {
+        const s = await (await fetch("/api/summary?days=30")).json();
+        let total = 0;
+        for (const r of s.by_machine_source) {
+          if (r.source === "kimi" && r.machine_id === id) {
+            total +=
+              r.input_tokens + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens;
+          }
+        }
+        return total;
+      },
+      [home],
+    );
+    await expect(tile(page, "Tokens")).toHaveText(compact(both)); // Kimi only runs on Home PC
+    await expect(tile(page, "Machines reporting")).toHaveText(/of 2$/);
+
+    await page.reload();
+    await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
+    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
+    await expect(tile(page, "Tokens")).toHaveText(compact(both));
+
+    // Back undoes one opening of a dropdown at a time.
+    await page.goBack();
+    await expect(filterButton(page, "Machines")).toHaveText(/All/);
+    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
+    await page.goForward();
+    await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
+
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    await expect(page).not.toHaveURL(/tool=|machine=/);
+    await expect(filterButton(page, "Tools")).toHaveText(/All/);
+    await expect(page.getByRole("button", { name: "Clear filters" })).toBeHidden();
+  });
+
+  test("models: a family, or exact models within one", async ({ page }) => {
+    await logIn(page);
+    const list = await openFilter(page, "Models");
+    await list.getByRole("checkbox", { name: "Kimi" }).check();
+    await expect(page).toHaveURL(/family=kimi/);
+
+    // Sonnet is used through Claude Code and OpenCode: pick only OpenCode's.
+    await list.getByRole("button", { name: /^Sonnet: show its 2 models/ }).click();
+    await list.getByRole("checkbox", { name: "anthropic/claude-sonnet-5-5" }).check();
+    const sonnet = list.getByRole("checkbox", { name: "Sonnet", exact: true });
+    await expect(sonnet).not.toBeChecked();
+    expect(await sonnet.evaluate((el) => (el as HTMLInputElement).indeterminate)).toBe(true);
+    await expect(page).toHaveURL(/model=anthropic%2Fclaude-sonnet-5-5/);
+    await page.keyboard.press("Escape");
+
+    const want = await apiTokens30(page, "model", ["k3", "anthropic/claude-sonnet-5-5"]);
+    await expect(tile(page, "Tokens")).toHaveText(compact(want));
+    await choose(page, "by", "model");
+    const legend = page.locator(".legend");
+    await expect(legend.locator(".legend-item")).toHaveText(["Sonnet", "Kimi"]);
+    await expect(filterButton(page, "Models")).toHaveText(/^anthropic\/claude-sonnet-5-5, Kimi/);
+  });
+
+  test("works with the keyboard alone", async ({ page }) => {
+    await logIn(page);
+    await filterButton(page, "Tools").focus();
+    await page.keyboard.press("Enter");
+    const list = page.getByRole("dialog", { name: "Filter by tools" });
+    await expect(list).toBeVisible();
+    await expect(list.getByRole("checkbox", { name: "All tools" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(list.getByRole("checkbox", { name: "Claude Code" })).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(page).toHaveURL(/tool=claude/);
+    await page.keyboard.press("Escape");
+    await expect(filterButton(page, "Tools")).toBeFocused();
+    await expect(filterButton(page, "Tools")).toHaveText(/Claude Code/);
+  });
+
+  test("the date picker's dots follow the filters", async ({ page }) => {
+    await logIn(page);
+    const list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Kimi" }).check();
+    await page.keyboard.press("Escape");
+    await page.locator(".range-button").click();
+    const shown = await page
+      .locator(".drp-day")
+      .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.date ?? ""));
+    const kimiDays = await page.evaluate(
+      async ([a, b]) =>
+        (await (await fetch(`/api/usage-days?from=${a}&to=${b}&source=kimi`)).json())
+          .days as string[],
+      [shown[0], shown.at(-1)],
+    );
+    const allDays = await page.evaluate(
+      async ([a, b]) =>
+        (await (await fetch(`/api/usage-days?from=${a}&to=${b}`)).json()).days as string[],
+      [shown[0], shown.at(-1)],
+    );
+    expect(kimiDays.length).toBeGreaterThan(0);
+    expect(kimiDays.length).toBeLessThan(allDays.length);
+    await expect
+      .poll(() =>
+        page
+          .locator(".drp-day.has-usage")
+          .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.date)),
+      )
+      .toEqual(kimiDays);
+  });
+
+  test("filters that match nothing say so", async ({ page }) => {
+    await logIn(page);
+    // Codex only runs on Office PC.
+    let list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Codex" }).check();
+    await page.keyboard.press("Escape");
+    list = await openFilter(page, "Machines");
+    await list.getByRole("checkbox", { name: "Laptop" }).check();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Nothing matches these filters in this period")).toBeVisible();
+    await expect(tile(page, "Tokens")).toHaveText("0");
+    await page.locator(".empty").getByRole("button", { name: "Clear filters" }).click();
+    await expect(filterButton(page, "Tools")).toHaveText(/All/);
+    await expect(page.locator(".legend-item").first()).toBeVisible();
+  });
 });
