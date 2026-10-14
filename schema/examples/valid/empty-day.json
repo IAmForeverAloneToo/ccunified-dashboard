@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "agent": {
+    "version": "1.2.3-rc.1+build.5",
+    "os": "darwin",
+    "arch": "arm64",
+    "ccusage_version": "20.0.31",
+    "sync_interval_minutes": 60
+  },
+  "timezone": "Asia/Tehran",
+  "days": [{ "date": "2026-02-28", "source": "claude", "models": [] }]
+}

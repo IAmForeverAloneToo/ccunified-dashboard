@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "agent": {
+    "version": "dev",
+    "os": "linux",
+    "arch": "amd64",
+    "ccusage_version": "20.0.31",
+    "sync_interval_minutes": 15
+  },
+  "timezone": "UTC",
+  "days": []
+}
