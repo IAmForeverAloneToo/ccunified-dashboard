@@ -28,6 +28,10 @@ type Hooks struct {
 	Now func() time.Time
 	// CheckOnline checks that a dashboard answers at url (replaced in tests).
 	CheckOnline func(ctx context.Context, url string) error
+	// Published reports whether public DNS has an address for a new
+	// dashboard's hostname yet. If set, the wizard waits for it before its
+	// first visit, so this computer's DNS never caches "doesn't exist".
+	Published func(ctx context.Context, host string) (bool, error)
 }
 
 func (h *Hooks) sleep(ctx context.Context, d time.Duration) error {

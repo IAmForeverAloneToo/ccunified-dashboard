@@ -124,7 +124,13 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 		return err
 	}
 
-	p.Printf("\nCreate a new dashboard\n\n%s\n", TokenHelp())
+	p.Printf("\nCreate a new dashboard\n\n")
+	p.Printf("This creates, on your Cloudflare account (the free plan is enough):\n")
+	p.Printf("  - a database (D1) and the dashboard itself (a Worker), both named %q\n", WorkerName)
+	p.Printf("  - a subdomain of your domain, like usage.example.com; Cloudflare adds its\n")
+	p.Printf("    DNS record and HTTPS certificate, so you don't need a server or IP address\n")
+	p.Printf("Your domain must already be on Cloudflare with the status Active.\n")
+	p.Printf("Nothing is created until you confirm at the end.\n\n%s\n", TokenHelp())
 	var cf Cloudflare
 	var accounts []Account
 	if _, err := p.Secret("Paste the API token (it won't be shown)", func(token string) error {
@@ -132,8 +138,14 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		list, err := cf.Accounts(checkCtx)
+		var apiErr *cloudflare.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("Cloudflare didn't accept that token: %v\n"+
+				"  Copy the token itself (it's shown once, after \"Create Token\"), and if you\n"+
+				"  set a TTL, check that it starts today. Paste a new token to try again", err)
+		}
 		if err != nil {
-			return fmt.Errorf("Cloudflare didn't accept that token: %v", err)
+			return fmt.Errorf("couldn't reach Cloudflare to check the token: %v", err)
 		}
 		if len(list) == 0 {
 			return errors.New("that token can't see any Cloudflare account; check its permissions")
@@ -174,7 +186,10 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 		return fmt.Errorf("couldn't list your domains: %w", err)
 	}
 	if len(zones) == 0 {
-		return errors.New("the token can't see any domain; give it Zone > Zone > Read for your domain")
+		return errors.New("the token can't see any active domain. The dashboard needs a domain on this " +
+			"Cloudflare account with the status Active (its nameservers pointing to Cloudflare); a newly added " +
+			"domain becomes Active once Cloudflare sees the nameserver change. Also check that the token " +
+			"includes Zone > Zone > Read for it")
 	}
 	zone := zones[0]
 	if len(zones) > 1 {
@@ -287,7 +302,7 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 	}
 
 	p.Printf("  … Waiting for %s to come online (new addresses can take a few minutes)\n", url)
-	if err := waitOnline(ctx, h, url); err != nil {
+	if err := waitOnline(ctx, h, url, hostname); err != nil {
 		p.Printf("  ! %s isn't answering yet. It usually starts within 15 minutes;\n", url)
 		p.Printf("    uploads will retry until it does.\n")
 	} else {
@@ -312,7 +327,10 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 }
 
 // waitOnline polls the dashboard's health endpoint for up to 15 minutes.
-func waitOnline(ctx context.Context, h *Hooks, url string) error {
+// It first waits until public DNS has the new hostname: a lookup made before
+// that would leave this computer's (or its router's) DNS remembering
+// "doesn't exist" for up to half an hour, even after the dashboard is up.
+func waitOnline(ctx context.Context, h *Hooks, url, host string) error {
 	check := h.CheckOnline
 	if check == nil {
 		check = func(ctx context.Context, url string) error {
@@ -321,6 +339,15 @@ func waitOnline(ctx context.Context, h *Hooks, url string) error {
 		}
 	}
 	deadline := h.now().Add(15 * time.Minute)
+	for h.Published != nil && h.now().Before(deadline) {
+		found, err := h.Published(ctx, host)
+		if err != nil || found {
+			break // public DNS unreachable: just check the dashboard
+		}
+		if err := h.sleep(ctx, 5*time.Second); err != nil {
+			return err
+		}
+	}
 	for {
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err := check(checkCtx, url)

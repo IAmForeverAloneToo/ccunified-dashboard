@@ -25,6 +25,8 @@ export interface FakeCloudflareOptions {
   zone: string;
   /** Hostnames that already have a DNS record (the wizard must refuse them). */
   takenHostnames?: string[];
+  /** How long after a custom domain is attached its DNS record appears. */
+  dnsDelayMs?: number;
 }
 
 interface Domain {
@@ -32,6 +34,8 @@ interface Domain {
   hostname: string;
   service: string;
   zone_id: string;
+  /** When public DNS starts answering for it. */
+  publishedAt: number;
 }
 
 class CfError extends Error {
@@ -79,8 +83,16 @@ export class FakeCloudflare {
   proxyUrl = "";
   /** The dashboard's (self-signed) certificate, for SSL_CERT_FILE. */
   certFile = "";
+  /** Public DNS (DNS-over-HTTPS JSON), for CCUNIFIED_DOH_URL. */
+  dohUrl = "";
   /** Every API call, as "METHOD /path", for the test report. */
   readonly calls: string[] = [];
+  /**
+   * Visits to a dashboard address before its DNS record existed. Real DNS
+   * would have answered "doesn't exist", and the visitor's DNS cache could
+   * keep that answer for half an hour.
+   */
+  earlyVisits = 0;
 
   readonly databases = new Map<string, string>(); // uuid -> name
   worker: { name: string; databaseId: string; compatibilityDate: string } | undefined;
@@ -139,6 +151,12 @@ export class FakeCloudflare {
         socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
         return;
       }
+      if (!this.published(host)) {
+        // Where a real lookup would fail with "no such host".
+        this.earlyVisits++;
+        socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+        return;
+      }
       const upstream = net.connect(sitePort, "127.0.0.1", () => {
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         upstream.write(head);
@@ -150,7 +168,9 @@ export class FakeCloudflare {
       upstream.on("error", () => socket.destroy());
       socket.on("error", () => upstream.destroy());
     });
-    this.apiUrl = `http://127.0.0.1:${await listen(api)}/client/v4`;
+    const apiPort = await listen(api);
+    this.apiUrl = `http://127.0.0.1:${apiPort}/client/v4`;
+    this.dohUrl = `http://127.0.0.1:${apiPort}/dns-query`;
     this.proxyUrl = `http://127.0.0.1:${await listen(proxy)}`;
   }
 
@@ -294,10 +314,32 @@ export class FakeCloudflare {
     return { id: name };
   }
 
+  private published(host: string): boolean {
+    return this.domains.some((d) => d.hostname === host && Date.now() >= d.publishedAt);
+  }
+
+  /** Public DNS: the custom domains, once published, point at this computer. */
+  private handleDoh(url: URL, res: http.ServerResponse) {
+    const name = (url.searchParams.get("name") ?? "").replace(/\.$/, "");
+    const type = url.searchParams.get("type");
+    const exists = this.published(name);
+    res.writeHead(200, { "content-type": "application/dns-json" }).end(
+      JSON.stringify({
+        Status: exists ? 0 : 3,
+        Question: [{ name, type: type === "AAAA" ? 28 : 1 }],
+        Answer: exists && type === "A" ? [{ name, type: 1, TTL: 300, data: "127.0.0.1" }] : [],
+      }),
+    );
+  }
+
   // ---- The REST API ----
 
   private async handleApi(req: http.IncomingMessage, res: http.ServerResponse) {
     const url = new URL(req.url ?? "/", "http://api");
+    if (url.pathname === "/dns-query") {
+      this.handleDoh(url, res);
+      return;
+    }
     const path = url.pathname.replace(/^\/client\/v4/, "");
     this.calls.push(`${req.method} ${path}`);
     const send = (status: number, body: unknown) =>
@@ -415,7 +457,11 @@ export class FakeCloudflare {
         throw new CfError(400, 100117, "Hostname is not in that zone");
       if (this.worker?.name !== body.service) throw new CfError(400, 100114, "No such Worker");
       const existing = this.domains.find((d) => d.hostname === body.hostname);
-      const domain = existing ?? { id: hexId(), ...body };
+      const domain = existing ?? {
+        id: hexId(),
+        ...body,
+        publishedAt: Date.now() + (this.opts.dnsDelayMs ?? 0),
+      };
       if (!existing) this.domains.push(domain);
       return { result: domain };
     }

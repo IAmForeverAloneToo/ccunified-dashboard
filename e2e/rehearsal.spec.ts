@@ -117,9 +117,15 @@ test.beforeAll(async () => {
     accountName: "Rehearsal account",
     zone: ZONE,
     takenHostnames: [`www.${ZONE}`],
+    dnsDelayMs: 4000, // like Cloudflare, a new subdomain's DNS record appears after a moment
   });
   await cf.start();
-  const network = { cloudflareApi: cf.apiUrl, proxy: cf.proxyUrl, certFile: cf.certFile };
+  const network = {
+    cloudflareApi: cf.apiUrl,
+    proxy: cf.proxyUrl,
+    certFile: cf.certFile,
+    publicDns: cf.dohUrl,
+  };
   machines = [
     new Machine(NAMES[0], join(root, "machines"), exe, logs.machines[0].claudeDir, network),
     new Machine(NAMES[1], join(root, "machines"), exe, logs.machines[1].claudeDir, network),
@@ -289,6 +295,8 @@ test("the setup wizard creates the dashboard on Cloudflare", async () => {
   expect(cf.worker?.name).toBe("ccunified");
   expect(cf.workersDev).toBe(false);
   expect(cf.domains.map((d) => d.hostname)).toEqual([HOST]);
+  // It waited for the DNS record instead of visiting too early.
+  expect(cf.earlyVisits).toBe(0);
 });
 
 test("the admin logs in and sees the first machine's usage", async () => {

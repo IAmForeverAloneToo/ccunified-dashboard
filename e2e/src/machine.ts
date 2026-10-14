@@ -13,6 +13,8 @@ export interface Network {
   proxy: string;
   /** Certificate the dashboard's domain uses. */
   certFile: string;
+  /** Public DNS (CCUNIFIED_DOH_URL). */
+  publicDns: string;
 }
 
 export class Machine {
@@ -45,6 +47,7 @@ export class Machine {
       HTTPS_PROXY: proxy,
       https_proxy: proxy,
       SSL_CERT_FILE: this.network.certFile,
+      CCUNIFIED_DOH_URL: this.network.publicDns,
     };
   }
 

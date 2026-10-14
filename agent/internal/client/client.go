@@ -30,7 +30,11 @@ type Client struct {
 }
 
 func New(baseURL, token string) *Client {
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 60 * time.Second}}
+	return &Client{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		Token:   token,
+		HTTP:    &http.Client{Timeout: 60 * time.Second, Transport: sharedTransport},
+	}
 }
 
 // UserAgent identifies the program to the dashboard.

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/cloudflare"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/login"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prompt"
@@ -34,7 +35,13 @@ type fakeCF struct {
 
 func (f *fakeCF) Accounts(context.Context) ([]Account, error) {
 	if f.token != f.goodToken {
-		return nil, errors.New("Invalid API Token (1000)")
+		// What the real client returns for a token Cloudflare rejects.
+		apiErr := &cloudflare.APIError{Status: 400}
+		apiErr.Errors = append(apiErr.Errors, struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}{9109, "Invalid access token"})
+		return nil, apiErr
 	}
 	return []Account{{ID: "acc1", Name: "Personal"}, {ID: "acc2", Name: "Work"}}, nil
 }
@@ -255,5 +262,43 @@ func TestTokenTemplateURL(t *testing.T) {
 		if !strings.Contains(u, want) {
 			t.Errorf("%s lacks %s", u, want)
 		}
+	}
+}
+
+// The wizard doesn't look up the new hostname itself until public DNS has
+// it; an earlier lookup would make this computer's DNS remember "doesn't
+// exist" for up to half an hour.
+func TestWaitOnlineWaitsForPublicDNSFirst(t *testing.T) {
+	var events []string
+	h := testHooks(new([]string))
+	answers := 0
+	h.Published = func(_ context.Context, host string) (bool, error) {
+		events = append(events, "dns "+host)
+		answers++
+		return answers >= 3, nil
+	}
+	h.CheckOnline = func(_ context.Context, url string) error {
+		events = append(events, "check "+url)
+		return nil
+	}
+	if err := waitOnline(context.Background(), h, "https://usage.example.com", "usage.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"dns usage.example.com", "dns usage.example.com", "dns usage.example.com", "check https://usage.example.com"}
+	if strings.Join(events, "|") != strings.Join(want, "|") {
+		t.Errorf("got %q, want %q", events, want)
+	}
+}
+
+func TestWaitOnlineChecksAnywayWhenPublicDNSIsUnreachable(t *testing.T) {
+	checks := 0
+	h := testHooks(new([]string))
+	h.Published = func(context.Context, string) (bool, error) { return false, errors.New("blocked") }
+	h.CheckOnline = func(context.Context, string) error { checks++; return nil }
+	if err := waitOnline(context.Background(), h, "https://usage.example.com", "usage.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 {
+		t.Errorf("%d check(s), want 1", checks)
 	}
 }

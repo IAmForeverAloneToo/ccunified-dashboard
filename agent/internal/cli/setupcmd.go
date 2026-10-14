@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/cloudflare"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prompt"
@@ -91,6 +92,10 @@ func hooks(p *prompt.Prompter) *setup.Hooks {
 	return &setup.Hooks{
 		InstallSchedule: func(cfg *config.Config) (string, error) {
 			return installSchedule(context.Background(), p, cfg.SyncIntervalMinutes)
+		},
+		Published: func(ctx context.Context, host string) (bool, error) {
+			addrs, err := client.LookupPublic(ctx, host)
+			return len(addrs) > 0, err
 		},
 		FirstSync: func(ctx context.Context) (string, error) {
 			res, err := RunSync(ctx, true)
