@@ -16,6 +16,8 @@ export interface MachineRow {
   name: string;
   last_seen_at: number | null;
   revoked_at: number | null;
+  /** JSON array of the tools this machine has reported usage for. */
+  tools: string;
 }
 
 export type AppEnv = {

@@ -9,6 +9,7 @@ import {
 } from "../lib/api";
 import { type Child, confirmDialog, h, openDialog, toast } from "../lib/dom";
 import { compactNumber, dateTime, OS_LABEL, relativeTime } from "../lib/format";
+import { toolList } from "../lib/tools";
 import type { PageContext } from "../main";
 import { machineSeries } from "./overview";
 
@@ -101,7 +102,7 @@ export async function machinesPage(ctx: PageContext) {
         "div",
         null,
         h("h1", null, "Machines"),
-        h("p", null, "Every machine that uploads its Claude Code usage to this dashboard."),
+        h("p", null, "Every machine that uploads its usage to this dashboard."),
       ),
     ),
     list,
@@ -120,6 +121,8 @@ export async function machinesPage(ctx: PageContext) {
       tokens30.set(r.machine_id, (tokens30.get(r.machine_id) ?? 0) + t);
     }
     const colors = machineSeries(m.machines);
+    // The Tools column appears once machines report more than one tool.
+    const showTools = new Set(m.machines.flatMap((x) => x.tools)).size > 1;
     addSlot.replaceChildren(addMachineCard(settings.source_repo, isAdmin));
 
     const header = h(
@@ -184,6 +187,7 @@ export async function machinesPage(ctx: PageContext) {
         h("td", null, statusBadge(machine)),
         h("td", { title: dateTime(machine.last_seen_at) }, relativeTime(machine.last_seen_at)),
         h("td", null, `${OS_LABEL[machine.os] ?? machine.os} (${machine.arch})`),
+        showTools ? h("td", null, toolList(machine.tools, summary.tools) || "—") : null,
         h(
           "td",
           null,
@@ -223,6 +227,7 @@ export async function machinesPage(ctx: PageContext) {
               h("th", { scope: "col" }, "Status"),
               h("th", { scope: "col" }, "Last upload"),
               h("th", { scope: "col" }, "System"),
+              showTools ? h("th", { scope: "col" }, "Tools") : null,
               h("th", { scope: "col" }, "Version"),
               h("th", { scope: "col", class: "num" }, "Sync every"),
               h("th", { scope: "col", class: "num" }, "Tokens (30 days)"),

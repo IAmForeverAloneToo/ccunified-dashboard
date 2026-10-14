@@ -1,177 +1,360 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "schema_version": {
-      "type": "number",
-      "const": 1
-    },
-    "agent": {
+  "oneOf": [
+    {
       "type": "object",
       "properties": {
-        "version": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "pattern": "^[0-9A-Za-z.+-]+$"
+        "schema_version": {
+          "type": "number",
+          "const": 1
         },
-        "os": {
-          "type": "string",
-          "enum": [
-            "windows",
-            "linux",
-            "darwin"
-          ]
-        },
-        "arch": {
-          "type": "string",
-          "enum": [
-            "amd64",
-            "arm64"
-          ]
-        },
-        "ccusage_version": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64,
-          "pattern": "^[0-9A-Za-z.+-]+$"
-        },
-        "sync_interval_minutes": {
-          "anyOf": [
-            {
-              "type": "number",
-              "const": 15
+        "agent": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[0-9A-Za-z.+-]+$"
             },
-            {
-              "type": "number",
-              "const": 30
+            "os": {
+              "type": "string",
+              "enum": [
+                "windows",
+                "linux",
+                "darwin"
+              ]
             },
-            {
-              "type": "number",
-              "const": 60
-            }
-          ]
-        }
-      },
-      "required": [
-        "version",
-        "os",
-        "arch",
-        "ccusage_version",
-        "sync_interval_minutes"
-      ],
-      "additionalProperties": false
-    },
-    "timezone": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64
-    },
-    "range": {
-      "type": "object",
-      "properties": {
-        "from": {
-          "type": "string",
-          "format": "date",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-        },
-        "to": {
-          "type": "string",
-          "format": "date",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-        }
-      },
-      "required": [
-        "from",
-        "to"
-      ],
-      "additionalProperties": false
-    },
-    "days": {
-      "maxItems": 100,
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "date": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "claude"
-            ]
-          },
-          "models": {
-            "maxItems": 50,
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "model": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 200,
-                  "pattern": "^[\\x21-\\x7e]+$"
-                },
-                "input_tokens": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 1000000000000000
-                },
-                "output_tokens": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 1000000000000000
-                },
-                "cache_creation_tokens": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 1000000000000000
-                },
-                "cache_read_tokens": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 1000000000000000
-                },
-                "cost_usd": {
+            "arch": {
+              "type": "string",
+              "enum": [
+                "amd64",
+                "arm64"
+              ]
+            },
+            "ccusage_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[0-9A-Za-z.+-]+$"
+            },
+            "sync_interval_minutes": {
+              "anyOf": [
+                {
                   "type": "number",
-                  "minimum": 0,
-                  "maximum": 1000000000
+                  "const": 15
+                },
+                {
+                  "type": "number",
+                  "const": 30
+                },
+                {
+                  "type": "number",
+                  "const": 60
                 }
-              },
-              "required": [
-                "model",
-                "input_tokens",
-                "output_tokens",
-                "cache_creation_tokens",
-                "cache_read_tokens",
-                "cost_usd"
-              ],
-              "additionalProperties": false
+              ]
             }
+          },
+          "required": [
+            "version",
+            "os",
+            "arch",
+            "ccusage_version",
+            "sync_interval_minutes"
+          ],
+          "additionalProperties": false
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            "to": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        },
+        "days": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "source": {
+                "type": "string",
+                "const": "claude"
+              },
+              "models": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "pattern": "^[\\x21-\\x7e]+$"
+                    },
+                    "input_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "output_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cache_creation_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cache_read_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cost_usd": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "model",
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_tokens",
+                    "cache_read_tokens",
+                    "cost_usd"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "date",
+              "source",
+              "models"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "agent",
+        "timezone",
+        "range",
+        "days"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 2
+        },
+        "agent": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[0-9A-Za-z.+-]+$"
+            },
+            "os": {
+              "type": "string",
+              "enum": [
+                "windows",
+                "linux",
+                "darwin"
+              ]
+            },
+            "arch": {
+              "type": "string",
+              "enum": [
+                "amd64",
+                "arm64"
+              ]
+            },
+            "ccusage_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[0-9A-Za-z.+-]+$"
+            },
+            "sync_interval_minutes": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "const": 15
+                },
+                {
+                  "type": "number",
+                  "const": 30
+                },
+                {
+                  "type": "number",
+                  "const": 60
+                }
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "os",
+            "arch",
+            "ccusage_version",
+            "sync_interval_minutes"
+          ],
+          "additionalProperties": false
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            "to": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        },
+        "sources": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$"
           }
         },
-        "required": [
-          "date",
-          "source",
-          "models"
-        ],
-        "additionalProperties": false
-      }
+        "days": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+              },
+              "models": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "pattern": "^[\\x21-\\x7e]+$"
+                    },
+                    "input_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "output_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cache_creation_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cache_read_tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000000000
+                    },
+                    "cost_usd": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "model",
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_tokens",
+                    "cache_read_tokens",
+                    "cost_usd"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "date",
+              "source",
+              "models"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "agent",
+        "timezone",
+        "range",
+        "sources",
+        "days"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "schema_version",
-    "agent",
-    "timezone",
-    "range",
-    "days"
   ],
-  "additionalProperties": false,
   "$id": "https://github.com/IAmForeverAloneToo/ccunified-dashboard/schema/ingest.schema.json",
   "title": "ccunified ingest payload",
-  "description": "Generated from worker/src/ingest/schema.ts. Uniqueness rules (one entry per source/date, one per model per day) are enforced by the Worker and agent but cannot be expressed here."
+  "description": "Generated from worker/src/ingest/schema.ts. The Worker and agent also enforce rules JSON Schema cannot express: one entry per source and date, each model once per day, each source listed once, and every day's source listed in sources."
 }

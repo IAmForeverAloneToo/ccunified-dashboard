@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "agent": {
+    "version": "0.2.0",
+    "os": "linux",
+    "arch": "amd64",
+    "ccusage_version": "20.0.32",
+    "sync_interval_minutes": 15
+  },
+  "timezone": "America/Toronto",
+  "range": {
+    "from": "2026-10-07",
+    "to": "2026-10-13"
+  },
+  "sources": [
+    "claude",
+    "codex",
+    "opencode",
+    "amp",
+    "droid",
+    "codebuff",
+    "hermes",
+    "pi",
+    "goose",
+    "kilo",
+    "copilot",
+    "gemini",
+    "antigravity",
+    "kimi",
+    "qwen",
+    "openclaw",
+    "grok",
+    "zcode",
+    "codex"
+  ],
+  "days": [
+    {
+      "date": "2026-10-12",
+      "source": "claude",
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "input_tokens": 18250,
+          "output_tokens": 96412,
+          "cache_creation_tokens": 1203311,
+          "cache_read_tokens": 28877410,
+          "cost_usd": 41.27
+        }
+      ]
+    },
+    {
+      "date": "2026-10-12",
+      "source": "codex",
+      "models": [
+        {
+          "model": "gpt-5.5",
+          "input_tokens": 10000,
+          "output_tokens": 2100,
+          "cache_creation_tokens": 0,
+          "cache_read_tokens": 20000,
+          "cost_usd": 0.123
+        }
+      ]
+    },
+    {
+      "date": "2026-10-13",
+      "source": "gemini",
+      "models": [
+        {
+          "model": "gemini-3-pro",
+          "input_tokens": 52000,
+          "output_tokens": 4100,
+          "cache_creation_tokens": 0,
+          "cache_read_tokens": 180000,
+          "cost_usd": 0.31
+        },
+        {
+          "model": "gemini-3-flash",
+          "input_tokens": 9000,
+          "output_tokens": 700,
+          "cache_creation_tokens": 0,
+          "cache_read_tokens": 0,
+          "cost_usd": 0.0049
+        }
+      ]
+    },
+    {
+      "date": "2026-10-13",
+      "source": "opencode",
+      "models": [
+        {
+          "model": "anthropic/claude-sonnet-5-5",
+          "input_tokens": 300,
+          "output_tokens": 1200,
+          "cache_creation_tokens": 5000,
+          "cache_read_tokens": 90000,
+          "cost_usd": 0.06
+        }
+      ]
+    }
+  ]
+}

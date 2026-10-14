@@ -106,6 +106,18 @@ async function seedDemo(db) {
       .run();
   }
 
+  // Each tool's models: [name, share of the day's usage, input price per million tokens].
+  const claude = [
+    ["claude-opus-5-5", 1.0, 15],
+    ["claude-sonnet-5-5", 0.6, 3],
+    ["claude-haiku-5-5", 0.25, 0.8],
+  ];
+  const codex = [["gpt-5.5", 0.5, 1.25]];
+  const gemini = [
+    ["gemini-3-pro", 0.45, 2],
+    ["gemini-3-flash", 0.15, 0.3],
+  ];
+  const opencode = [["anthropic/claude-sonnet-5-5", 0.35, 3]];
   const machines = [
     {
       name: "Office PC",
@@ -114,6 +126,7 @@ async function seedDemo(db) {
       seen: now - 4 * 60e3,
       interval: 30,
       created: 90,
+      tools: { claude, codex },
     },
     {
       name: "Laptop",
@@ -122,6 +135,7 @@ async function seedDemo(db) {
       seen: now - 12 * 60e3,
       interval: 15,
       created: 80,
+      tools: { claude, gemini },
     },
     {
       name: "Build server",
@@ -131,6 +145,7 @@ async function seedDemo(db) {
       interval: 30,
       created: 60,
       version: "0.0.9",
+      tools: { claude },
     },
     {
       name: "Home PC",
@@ -139,24 +154,27 @@ async function seedDemo(db) {
       seen: now - 25 * 60e3,
       interval: 60,
       created: 20,
+      tools: { claude, opencode },
     },
   ];
-  const models = [
-    ["claude-opus-5-5", 1.0, 15],
-    ["claude-sonnet-5-5", 0.6, 3],
-    ["claude-haiku-5-5", 0.25, 0.8],
-  ];
+  // The order the dashboard first saw each tool in, which sets their colors.
+  await db
+    .prepare("UPDATE settings SET value = ?1 WHERE key = 'tools'")
+    .bind(JSON.stringify(["claude", "codex", "gemini", "opencode"]))
+    .run();
   let seedValue = 42;
   const rand = () => {
     seedValue = (seedValue * 1664525 + 1013904223) % 2 ** 32;
     return seedValue / 2 ** 32;
   };
   const today = new Date(now - 4 * 3600e3).toISOString().slice(0, 10);
+  // Days (counted back from today) with no usage anywhere, as on a holiday.
+  const daysOff = new Set([9, 23, 24, 47]);
   for (const m of machines) {
     const id = randomUUID();
     await db
       .prepare(
-        "INSERT INTO machines (id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes, token_hash, created_at, last_seen_at) VALUES (?1, ?2, ?3, 'amd64', ?4, '20.0.31', ?5, ?6, ?7, ?8)",
+        "INSERT INTO machines (id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes, token_hash, created_at, last_seen_at, tools) VALUES (?1, ?2, ?3, 'amd64', ?4, '20.0.32', ?5, ?6, ?7, ?8, ?9)",
       )
       .bind(
         id,
@@ -167,43 +185,49 @@ async function seedDemo(db) {
         sha256(randomUUID()),
         now - m.created * 864e5,
         m.seen,
+        JSON.stringify(Object.keys(m.tools)),
       )
       .run();
     const rows = [];
     for (let d = 0; d < m.created; d++) {
       const date = new Date(Date.parse(`${today}T00:00:00Z`) - d * 864e5);
       const weekend = date.getUTCDay() === 0 || date.getUTCDay() === 6;
-      if (rand() < (weekend ? 0.6 : 0.08)) continue;
-      for (const [model, share, price] of models) {
-        if (rand() < 0.25 && share < 1) continue;
-        const base = m.scale * share * (weekend ? 0.4 : 1) * (0.5 + rand());
-        const input = Math.round(40_000 * base);
-        const output = Math.round(180_000 * base);
-        const cacheCreate = Math.round(1_400_000 * base);
-        const cacheRead = Math.round(22_000_000 * base);
-        const cost =
-          (input * price +
-            output * price * 5 +
-            cacheCreate * price * 1.25 +
-            cacheRead * price * 0.1) /
-          1e6;
-        rows.push(
-          db
-            .prepare(
-              "INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd, updated_at) VALUES (?1, 'claude', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )
-            .bind(
-              id,
-              date.toISOString().slice(0, 10),
-              model,
-              input,
-              output,
-              cacheCreate,
-              cacheRead,
-              cost,
-              now,
-            ),
-        );
+      if (daysOff.has(d) || rand() < (weekend ? 0.6 : 0.08)) continue;
+      for (const [source, models] of Object.entries(m.tools)) {
+        for (const [model, share, price] of models) {
+          if (rand() < 0.25 && share < 1) continue;
+          const base = m.scale * share * (weekend ? 0.4 : 1) * (0.5 + rand());
+          const input = Math.round(40_000 * base);
+          const output = Math.round(180_000 * base);
+          // Codex and Gemini CLI don't report cache writes.
+          const cacheCreate =
+            source === "claude" || source === "opencode" ? Math.round(1_400_000 * base) : 0;
+          const cacheRead = Math.round(22_000_000 * base);
+          const cost =
+            (input * price +
+              output * price * 5 +
+              cacheCreate * price * 1.25 +
+              cacheRead * price * 0.1) /
+            1e6;
+          rows.push(
+            db
+              .prepare(
+                "INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              )
+              .bind(
+                id,
+                source,
+                date.toISOString().slice(0, 10),
+                model,
+                input,
+                output,
+                cacheCreate,
+                cacheRead,
+                cost,
+                now,
+              ),
+          );
+        }
       }
     }
     for (let i = 0; i < rows.length; i += 50) await db.batch(rows.slice(i, i + 50));

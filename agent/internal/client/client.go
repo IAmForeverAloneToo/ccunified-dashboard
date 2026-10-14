@@ -119,6 +119,9 @@ type IngestResult struct {
 	Timezone      string  `json:"timezone"`
 	ServerVersion string  `json:"server_version"`
 	LatestVersion *string `json:"latest_version"`
+	// SchemaVersions are the upload formats the dashboard accepts (absent
+	// before ccunified 0.2, which accepts format 1 only).
+	SchemaVersions []int `json:"schema_versions"`
 }
 
 // Ingest uploads one payload.
@@ -177,22 +180,41 @@ func (c *Client) PairPoll(ctx context.Context, deviceCode string) (*PairPoll, er
 
 // Health checks that a ccunified dashboard answers at BaseURL and returns its version.
 func (c *Client) Health(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/healthz", nil)
+	info, err := c.HealthInfo(ctx)
 	if err != nil {
 		return "", err
+	}
+	return info.Version, nil
+}
+
+// HealthInfo describes a dashboard.
+type HealthInfo struct {
+	OK      bool   `json:"ok"`
+	Version string `json:"version"`
+	// SchemaVersions are the upload formats it accepts; dashboards before
+	// ccunified 0.2 don't say, and accept format 1 only.
+	SchemaVersions []int `json:"schema_versions"`
+}
+
+// HealthInfo checks that a ccunified dashboard answers at BaseURL and
+// describes it.
+func (c *Client) HealthInfo(ctx context.Context) (*HealthInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/healthz", nil)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("user-agent", UserAgent())
 	res, err := c.HTTP.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer res.Body.Close()
-	var body struct {
-		OK      bool   `json:"ok"`
-		Version string `json:"version"`
-	}
+	var body HealthInfo
 	if res.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(res.Body, 1<<16)).Decode(&body) != nil || !body.OK {
-		return "", fmt.Errorf("no ccunified dashboard answered at %s", c.BaseURL)
+		return nil, fmt.Errorf("no ccunified dashboard answered at %s", c.BaseURL)
 	}
-	return body.Version, nil
+	if len(body.SchemaVersions) == 0 {
+		body.SchemaVersions = []int{1}
+	}
+	return &body, nil
 }

@@ -291,3 +291,68 @@ test.describe("on a phone", () => {
     await expect(page).toHaveURL(/range=custom/);
   });
 });
+
+test.describe("tools other than Claude Code", () => {
+  test("split by tool: each tool keeps its name and color, and the Tools table matches the API", async ({
+    page,
+  }) => {
+    await logIn(page);
+    await page.locator('input[name="by"][value="tool"]').check({ force: true });
+    await expect(page).toHaveURL(/by=tool/);
+    await expect(page.getByRole("heading", { name: "Daily tokens by tool" })).toBeVisible();
+    const legend = page.locator(".legend");
+    for (const name of ["Claude Code", "Codex", "Gemini CLI", "OpenCode"]) {
+      await expect(legend.getByText(name, { exact: true })).toBeVisible();
+    }
+
+    const api = await page.evaluate(async () => {
+      const s = await (await fetch("/api/summary?days=30")).json();
+      const totals: Record<string, number> = {};
+      for (const r of s.by_day_source) {
+        totals[r.source] =
+          (totals[r.source] ?? 0) +
+          r.input_tokens +
+          r.output_tokens +
+          r.cache_creation_tokens +
+          r.cache_read_tokens;
+      }
+      return { tools: s.tools as string[], totals };
+    });
+    expect(api.tools).toEqual(["claude", "codex", "gemini", "opencode"]);
+    const names: Record<string, string> = {
+      claude: "Claude Code",
+      codex: "Codex",
+      gemini: "Gemini CLI",
+      opencode: "OpenCode",
+    };
+    const table = page
+      .locator(".card")
+      .filter({ has: page.getByRole("heading", { name: "Tools" }) });
+    for (const [id, total] of Object.entries(api.totals)) {
+      const row = table.locator("tbody tr").filter({ hasText: names[id] ?? id });
+      // Total tokens is the sixth column.
+      await expect(row.locator("td").nth(4)).toHaveText(
+        new Intl.NumberFormat("en-US").format(total),
+      );
+      await expect(row.locator(".swatch")).toHaveClass(new RegExp(`s${api.tools.indexOf(id) + 1}`));
+    }
+
+    // Reloading keeps the split; models of all tools are grouped into families.
+    await page.reload();
+    await expect(page.locator('input[name="by"][value="tool"]')).toBeChecked();
+    await page.locator('input[name="by"][value="model"]').check({ force: true });
+    for (const family of ["Opus", "Sonnet", "GPT", "Gemini"]) {
+      await expect(legend.getByText(family, { exact: true })).toBeVisible();
+    }
+  });
+
+  test("the Machines page lists each machine's tools", async ({ page }) => {
+    await logIn(page);
+    await page.getByRole("link", { name: "Machines" }).first().click();
+    const row = (name: string) => page.locator("tbody tr").filter({ hasText: name });
+    await expect(row("Office PC")).toContainText("Claude Code, Codex");
+    await expect(row("Laptop")).toContainText("Claude Code, Gemini CLI");
+    await expect(row("Build server")).toContainText("Claude Code");
+    await expect(page.getByRole("columnheader", { name: "Tools" })).toBeVisible();
+  });
+});

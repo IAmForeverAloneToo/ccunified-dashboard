@@ -8,6 +8,7 @@ import (
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/ccusage"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/syncer"
 )
 
@@ -81,8 +82,11 @@ func runSync(ctx context.Context, env *Env, args []string) error {
 	if *quiet {
 		return nil
 	}
-	if res.NoClaudeData {
-		env.Printf("No Claude Code logs on this machine yet. Uploaded an empty report; usage appears after you use Claude Code here.\n")
+	if res.Warning != "" {
+		env.Printf("Note: %s\n", res.Warning)
+	}
+	if res.Full && res.DaysWithUsage == 0 {
+		env.Printf("No usage found on this machine yet. Uploaded an empty report; usage appears after you use Claude Code (or another tool ccusage reads) here.\n")
 		return nil
 	}
 	what := "the last 7 days"
@@ -90,5 +94,11 @@ func runSync(ctx context.Context, env *Env, args []string) error {
 		what = fmt.Sprintf("the full history (%s to %s)", res.From, res.To)
 	}
 	env.Printf("Uploaded %s: %d day(s) with usage, %d row(s) changed on the dashboard.\n", what, res.DaysWithUsage, res.ChangedRows)
+	if len(res.Tools) > 0 {
+		env.Printf("Tools: %s\n", toolList(res.Tools))
+	}
+	if res.Format == payload.SchemaV1 {
+		env.Printf("The dashboard accepts Claude Code usage only. To add the other tools, run: ccunified server update\n")
+	}
 	return nil
 }

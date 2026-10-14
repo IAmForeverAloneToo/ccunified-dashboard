@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/ccusage"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version"
 )
 
@@ -49,6 +52,25 @@ func ago(t time.Time, now time.Time) string {
 	}
 }
 
+// toolList names the tools a machine has reported usage for, in ccusage's order.
+func toolList(ids []string) string {
+	if len(ids) == 0 {
+		return "no usage found on this machine yet"
+	}
+	var names []string
+	for _, t := range ccusage.Tools {
+		if slices.Contains(ids, t.ID) {
+			names = append(names, t.Name)
+		}
+	}
+	for _, id := range ids {
+		if ccusage.ToolName(id) == id {
+			names = append(names, id)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
 func runStatus(_ context.Context, env *Env, args []string) error {
 	if len(args) > 0 {
 		return &UsageError{Msg: "unexpected arguments"}
@@ -81,8 +103,12 @@ func runStatus(_ context.Context, env *Env, args []string) error {
 	if state.LastError != "" && state.LastAttemptAt.After(state.LastSuccessAt) {
 		row("Last problem", fmt.Sprintf("%s: %s", ago(state.LastAttemptAt, now), state.LastError))
 	}
-	if state.NoClaudeData {
-		row("Claude Code", "no logs found on this machine yet")
+	if state.LastWarning != "" && !state.LastSuccessAt.IsZero() {
+		row("Note", state.LastWarning)
+	}
+	row("Tools", toolList(state.Tools))
+	if state.UploadFormat == payload.SchemaV1 {
+		row("Other tools", "the dashboard accepts Claude Code usage only; to add the other tools, run: ccunified server update")
 	}
 	if state.LatestVersion != "" && state.LatestVersion != version.Version {
 		row("Update", fmt.Sprintf("version %s is available; run: ccunified update", state.LatestVersion))

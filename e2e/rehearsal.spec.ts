@@ -1,21 +1,29 @@
 /**
  * The full rehearsal: the real ccunified program creates a dashboard on a
  * stand-in Cloudflare, a second machine joins with a code approved in Chrome,
- * both upload their Claude Code usage, and the dashboard must show exactly
- * what ccusage reports for those logs.
+ * both upload their usage from Claude Code, Codex and OpenCode, and the
+ * dashboard must show exactly what ccusage reports for those logs, per
+ * machine and per tool.
  *
- * Real logs are used when this computer has any (split between the two
- * machines); otherwise a small set is generated. Copies of the logs are
- * deleted at the end; only daily totals ever reach the dashboard.
+ * Each tool's real logs are used when this computer has any (split between
+ * the two machines); otherwise a small set is generated. Copies of the logs
+ * are deleted at the end; only daily totals ever reach the dashboard.
  */
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Page, test } from "@playwright/test";
-import { ccusageTotals, type LogSet, prepareLogs, type Totals } from "./src/claude-logs";
 import { FakeCloudflare } from "./src/fake-cloudflare";
 import { Machine } from "./src/machine";
+import {
+  ccusageTotals,
+  fileCount,
+  type LogSet,
+  prepareLogs,
+  TOOLS,
+  type Totals,
+} from "./src/usage-logs";
 
 const repo = resolve(import.meta.dirname, "..");
 const agentDir = join(repo, "agent");
@@ -65,7 +73,7 @@ let browser: Browser;
 let page: Page;
 let logs: LogSet;
 let machines: [Machine, Machine];
-let expected: [Totals, Totals];
+let expected: [ReturnType<typeof ccusageTotals>, ReturnType<typeof ccusageTotals>];
 let ccusagePath: string;
 
 test.beforeAll(async () => {
@@ -102,14 +110,16 @@ test.beforeAll(async () => {
 
   logs = prepareLogs(join(root, "machines"), NAMES);
   expected = [
-    ccusageTotals(ccusage, logs.machines[0].claudeDir, TIMEZONE),
-    ccusageTotals(ccusage, logs.machines[1].claudeDir, TIMEZONE),
+    ccusageTotals(ccusage, logs.machines[0], TIMEZONE),
+    ccusageTotals(ccusage, logs.machines[1], TIMEZONE),
   ];
-  console.log(`Claude Code logs: ${logs.source}`);
+  console.log(`Logs: ${TOOLS.map((t) => `${t} ${logs.source[t]}`).join(", ")}`);
   logs.machines.forEach((m, i) => {
+    const e = expected[i];
+    if (!e) return;
     console.log(
-      `  ${NAMES[i]}: ${m.files.length} file(s), ${allTokens(expected[i] as Totals).toLocaleString("en-US")} tokens, ` +
-        `$${(expected[i] as Totals).cost_usd.toFixed(2)} (per ccusage)`,
+      `  ${NAMES[i]}: ${TOOLS.map((t) => `${m.files[t].length} ${t}`).join(", ")} file(s); ` +
+        `${allTokens(e.total).toLocaleString("en-US")} tokens, $${e.total.cost_usd.toFixed(2)} (per ccusage)`,
     );
   });
 
@@ -132,6 +142,10 @@ test.beforeAll(async () => {
     new Machine(NAMES[0], join(root, "machines"), exe, logs.machines[0].claudeDir, network),
     new Machine(NAMES[1], join(root, "machines"), exe, logs.machines[1].claudeDir, network),
   ];
+  // Codex and OpenCode find their logs in the machine's home.
+  machines.forEach((m, i) => {
+    expect(m.home).toBe(logs.machines[i]?.home);
+  });
 
   browser = await chromium.launch({ channel: "chrome", proxy: { server: cf.proxyUrl } });
   const context = await browser.newContext({
@@ -146,15 +160,28 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await browser?.close();
   await cf?.stop();
-  // Includes the copies of this computer's Claude Code logs.
+  // Includes the copies of this computer's logs.
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
+const TOOL_NAMES: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+};
+
+/** The tools ccusage found usage for in machine i's logs. */
+const usedTools = (i: number) =>
+  Object.entries(expected[i]?.byTool ?? {})
+    .filter(([, t]) => allTokens(t) > 0)
+    .map(([tool]) => tool);
+
+const hasLogs = (i: number) => fileCount(logs.machines[i] as (typeof logs.machines)[0]) > 0;
+
 function firstUploadLine(m: Machine): RegExp {
-  const files = logs.machines[NAMES.indexOf(m.name)]?.files.length ?? 0;
-  return files > 0
-    ? /✓ Uploaded this machine's history \(\d+ day\(s\) with usage\)/
-    : /✓ Connected\. No Claude Code logs on this machine yet/;
+  return hasLogs(NAMES.indexOf(m.name))
+    ? /✓ Uploaded this machine's history \(\d+ day\(s\) with usage; [^)]+\)/
+    : /✓ Connected\. No usage on this machine yet/;
 }
 
 async function expectTiles(totals: Totals, reporting: string) {
@@ -189,8 +216,13 @@ async function expectTiles(totals: Totals, reporting: string) {
   await expect(page.locator("#tz-note")).toHaveText(`${period} · days in ${TIMEZONE}`);
 }
 
-/** Each machine's totals for all time, straight from the dashboard's API. */
-async function dashboardTotals(query = "days=3660"): Promise<Record<string, Totals>> {
+/**
+ * Totals straight from the dashboard's API (for all time unless a query says
+ * otherwise): per machine, and per machine and tool ("desk/codex").
+ */
+async function dashboardTotals(
+  query = "days=3660",
+): Promise<{ machines: Record<string, Totals>; tools: Record<string, Totals> }> {
   return page.evaluate(async (q) => {
     const get = async (path: string) => {
       const res = await fetch(path);
@@ -202,25 +234,53 @@ async function dashboardTotals(query = "days=3660"): Promise<Record<string, Tota
     const names = new Map<string, string>(
       machines.map((m: { id: string; name: string }) => [m.id, m.name]),
     );
-    const out: Record<string, Totals> = {};
-    for (const r of summary.by_day_machine) {
-      const name = names.get(r.machine_id) ?? r.machine_id;
-      const t = out[name] ?? {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_tokens: 0,
-        cache_read_tokens: 0,
-        cost_usd: 0,
-      };
-      out[name] = t;
-      t.input_tokens += r.input_tokens;
-      t.output_tokens += r.output_tokens;
-      t.cache_creation_tokens += r.cache_creation_tokens;
-      t.cache_read_tokens += r.cache_read_tokens;
-      t.cost_usd += r.cost_usd;
-    }
-    return out;
+    type Row = Totals & { machine_id: string; source?: string };
+    const sum = (rows: Row[], key: (r: Row) => string) => {
+      const out: Record<string, Totals> = {};
+      for (const r of rows) {
+        const k = key(r);
+        const t = out[k] ?? {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          cost_usd: 0,
+        };
+        out[k] = t;
+        t.input_tokens += r.input_tokens;
+        t.output_tokens += r.output_tokens;
+        t.cache_creation_tokens += r.cache_creation_tokens;
+        t.cache_read_tokens += r.cache_read_tokens;
+        t.cost_usd += r.cost_usd;
+      }
+      return out;
+    };
+    const name = (r: Row) => names.get(r.machine_id) ?? r.machine_id;
+    return {
+      machines: sum(summary.by_day_machine, name),
+      tools: sum(summary.by_machine_source, (r) => `${name(r)}/${r.source}`),
+    };
   }, query);
+}
+
+/** Every machine's and every machine's tools' totals match ccusage's. */
+function expectSameAsCcusage(
+  actual: Awaited<ReturnType<typeof dashboardTotals>>,
+  want: [ReturnType<typeof ccusageTotals>, ReturnType<typeof ccusageTotals>],
+) {
+  const wantTools: string[] = [];
+  NAMES.forEach((name, i) => {
+    const w = want[i];
+    if (!w) return;
+    if (allTokens(w.total) > 0) expectSameTotals(actual.machines[name], w.total);
+    else expect(actual.machines[name]).toBeUndefined();
+    for (const [tool, t] of Object.entries(w.byTool)) {
+      if (allTokens(t) === 0) continue;
+      wantTools.push(`${name}/${tool}`);
+      expectSameTotals(actual.tools[`${name}/${tool}`], t);
+    }
+  });
+  expect(Object.keys(actual.tools).sort()).toEqual(wantTools.sort());
 }
 
 function expectSameTotals(actual: Totals | undefined, want: Totals) {
@@ -312,9 +372,9 @@ test("the admin logs in and sees the first machine's usage", async () => {
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
-  await expectTiles(expected[0], "1 of 1");
+  await expectTiles(expected[0].total, "1 of 1");
   const totals = await dashboardTotals();
-  expectSameTotals(totals[NAMES[0]], expected[0]);
+  expectSameTotals(totals.machines[NAMES[0]], expected[0].total);
 });
 
 test("a second machine joins with a code approved in the dashboard", async () => {
@@ -349,16 +409,11 @@ test("a second machine joins with a code approved in the dashboard", async () =>
   expect(await s.exit()).toBe(0);
 });
 
-test("the dashboard shows exactly what ccusage reports for each machine", async () => {
+test("the dashboard shows exactly what ccusage reports for each machine and tool", async () => {
   const totals = await dashboardTotals();
-  expect(Object.keys(totals).sort()).toEqual(
-    NAMES.filter((_, i) => (logs.machines[i]?.files.length ?? 0) > 0).sort(),
-  );
-  NAMES.forEach((name, i) => {
-    if ((logs.machines[i]?.files.length ?? 0) > 0)
-      expectSameTotals(totals[name], expected[i] as Totals);
-  });
-  await expectTiles(add(expected[0], expected[1]), "2 of 2");
+  expect(Object.keys(totals.machines).sort()).toEqual(NAMES.filter((_, i) => hasLogs(i)).sort());
+  expectSameAsCcusage(totals, expected);
+  await expectTiles(add(expected[0].total, expected[1].total), "2 of 2");
   await page.screenshot({ path: test.info().outputPath("overview.png"), fullPage: true });
 
   await page.goto(`${DASHBOARD}/machines`);
@@ -367,12 +422,17 @@ test("the dashboard shows exactly what ccusage reports for each machine", async 
     const row = page.getByRole("row").filter({ hasText: name });
     await expect(row).toContainText(VERSION);
     await expect(row).toContainText(
-      (logs.machines[NAMES.indexOf(name)]?.files.length ?? 0) > 0
-        ? "Reporting"
-        : "Waiting for first upload",
+      hasLogs(NAMES.indexOf(name)) ? "Reporting" : "Waiting for first upload",
     );
+    for (const tool of usedTools(NAMES.indexOf(name))) {
+      await expect(row).toContainText(TOOL_NAMES[tool] ?? tool);
+    }
   }
   await page.screenshot({ path: test.info().outputPath("machines.png"), fullPage: true });
+
+  await page.goto(`${DASHBOARD}/?range=all&by=tool`);
+  await expect(page.getByRole("heading", { name: /tokens by tool/ })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("tools.png"), fullPage: true });
 });
 
 test("syncing again uploads nothing new and changes no numbers", async () => {
@@ -384,15 +444,17 @@ test("syncing again uploads nothing new and changes no numbers", async () => {
   expect(status.output).toMatch(new RegExp(`Dashboard:\\s+${DASHBOARD}\\n`));
   expect(status.output).toMatch(new RegExp(`Machine:\\s+${m1.name}\\n`));
   expect(status.output).toMatch(new RegExp(`Time zone:\\s+${TIMEZONE}\\n`));
-  if (logs.machines[0].files.length > 0)
+  const toolsLine = status.output.match(/Tools:\s+(.*)\n/)?.[1] ?? "";
+  for (const tool of usedTools(0)) expect(toolsLine).toContain(TOOL_NAMES[tool] ?? tool);
+  if (hasLogs(0))
     expect(status.output).toMatch(
       /Last upload:\s+just now \(\d+ day\(s\) with usage, 0 row\(s\) changed\)/,
     );
   expect(status.output).not.toContain("Last problem");
 
   const totals = await dashboardTotals();
-  if (logs.machines[0].files.length > 0) expectSameTotals(totals[NAMES[0]], expected[0]);
-  await expectTiles(add(expected[0], expected[1]), "2 of 2");
+  expectSameAsCcusage(totals, expected);
+  await expectTiles(add(expected[0].total, expected[1].total), "2 of 2");
 });
 
 test("a custom date range shows exactly what ccusage reports for those days", async () => {
@@ -412,15 +474,10 @@ test("a custom date range shows exactly what ccusage reports for those days", as
   await expect(page).toHaveURL(new RegExp(`range=custom&from=${from}&to=${to}`));
 
   const want = logs.machines.map((m) =>
-    ccusageTotals(ccusagePath, m.claudeDir, TIMEZONE, { since: from, until: to }),
-  ) as [Totals, Totals];
-  const totals = await dashboardTotals(`from=${from}&to=${to}`);
-  NAMES.forEach((name, i) => {
-    const w = want[i] as Totals;
-    if (allTokens(w) > 0) expectSameTotals(totals[name], w);
-    else expect(totals[name]).toBeUndefined();
-  });
-  const sum = add(want[0], want[1]);
+    ccusageTotals(ccusagePath, m, TIMEZONE, { since: from, until: to }),
+  ) as typeof expected;
+  expectSameAsCcusage(await dashboardTotals(`from=${from}&to=${to}`), want);
+  const sum = add(want[0].total, want[1].total);
   const tile = (label: string) =>
     page
       .locator(".tile")

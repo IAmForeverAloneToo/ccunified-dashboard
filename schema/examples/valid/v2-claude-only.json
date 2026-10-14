@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "agent": {
+    "version": "0.2.0",
+    "os": "windows",
+    "arch": "amd64",
+    "ccusage_version": "20.0.32",
+    "sync_interval_minutes": 15
+  },
+  "timezone": "UTC",
+  "range": {
+    "from": "2026-10-13",
+    "to": "2026-10-13"
+  },
+  "sources": ["claude"],
+  "days": []
+}

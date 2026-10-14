@@ -173,8 +173,19 @@ type State struct {
 	// uploaded. When it differs from the configured zone, the next sync
 	// uploads everything again.
 	BackfillTimezone string `json:"backfill_timezone,omitempty"`
-	LatestVersion    string `json:"latest_version,omitempty"`
-	NoClaudeData     bool   `json:"no_claude_data,omitempty"`
+	// BackfillFormat is the upload format of that full upload. When the
+	// dashboard starts accepting a newer format (every tool, not just Claude
+	// Code), the next sync uploads everything again.
+	BackfillFormat int `json:"backfill_format,omitempty"`
+	// UploadFormat is the newest upload format both this program and the
+	// dashboard accept, as the dashboard last said; 0 means not asked yet.
+	UploadFormat  int    `json:"upload_format,omitempty"`
+	LatestVersion string `json:"latest_version,omitempty"`
+	// Tools are the tools this machine has reported usage for, such as
+	// "claude" and "codex".
+	Tools []string `json:"tools,omitempty"`
+	// LastWarning is a problem the last sync worked around.
+	LastWarning string `json:"last_warning,omitempty"`
 }
 
 // LoadState reads state.json; a missing or damaged file gives a fresh state.

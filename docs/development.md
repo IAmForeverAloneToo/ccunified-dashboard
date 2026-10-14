@@ -21,7 +21,7 @@ agent/        Go: the ccunified program
   internal/cli/         commands
   internal/setup/       the setup wizard and the server commands
   internal/syncer/      runs ccusage and uploads
-  internal/ccusage/     finds, verifies and runs the bundled ccusage (pinned.json)
+  internal/ccusage/     finds, verifies and runs the bundled ccusage (pinned.json, tools.go)
   internal/cloudflare/  Cloudflare REST API client
   internal/schedule/    Task Scheduler, systemd and cron
   internal/update/      self-update
@@ -70,19 +70,25 @@ go vet ./... && go test ./...
 - **Upload format:** the Zod schema in `worker/src/ingest/schema.ts` is the
   source of truth; `schema/ingest.schema.json` is generated from it
   (`UPDATE_SCHEMA=1 npm test -w worker` rewrites it). The example uploads in
-  `schema/examples/` must be accepted or rejected by both the Worker and the Go
-  program; see [its README](../schema/examples/README.md).
-- **Dashboard:** unit tests for the date logic (`dashboard/src/lib/*.test.ts`,
-  part of `npm test`), and browser tests (`npm run test:browser`) that drive
-  the date range picker in Chrome and Firefox against the demo data: mouse,
-  keyboard, typed dates, shortcuts, cancelling, future days, usage dots,
-  reload and Back, phone layout, and totals matching the API.
+  `schema/examples/`, in both formats, must be accepted or rejected by both
+  the Worker and the Go program; see [its README](../schema/examples/README.md).
+  The Worker tests also apply each migration to a database from the previous
+  release.
+- **Dashboard:** unit tests for the date logic and the tool names and colors
+  (`dashboard/src/lib/*.test.ts`, part of `npm test`), and browser tests
+  (`npm run test:browser`) in Chrome and Firefox against the demo data: the
+  date range picker (mouse, keyboard, typed dates, shortcuts, cancelling,
+  future days, usage dots, reload and Back, phone layout, totals matching the
+  API), splitting by tool, and the Machines page's tools.
 - **Login keys:** `schema/test-vectors/login-kdf.json` holds password-to-key
   results that the browser code, the Worker tests and the Go program must all
   reproduce.
 - **Go:** unit tests for every package, including the setup wizard against a
-  simulated Cloudflare API with an SQLite stand-in for D1, and syncing with the
-  real ccusage against sample Claude Code logs.
+  simulated Cloudflare API with an SQLite stand-in for D1, updating a
+  dashboard from the first release, and syncing with the real ccusage against
+  sample Claude Code and Codex logs, to an updated dashboard and to one that
+  accepts Claude Code only. A test checks that the program's list of tools
+  (`internal/ccusage/tools.go`) is exactly what the pinned ccusage reads.
 - **Real background schedule:** with `CCUNIFIED_TEST_SCHEDULER=1`,
   `go test ./internal/schedule/ -run Integration` installs the real Task
   Scheduler task or systemd timer, waits for it to upload to a local test
@@ -107,20 +113,22 @@ real browser:
    subdomain).
 4. Google Chrome logs in. Machine two joins; Chrome approves its code.
 5. Checks that the dashboard shows exactly what ccusage reports for each
-   machine's logs, in the API and on the page, that syncing again changes
-   nothing, and that a custom date range matches ccusage's numbers for the
-   same days.
+   machine's logs, per machine and per tool, in the API and on the page, that
+   syncing again changes nothing, and that a custom date range matches
+   ccusage's numbers for the same days.
 
-It uses **this computer's real Claude Code logs** when there are any, copied
-and split between the two machines file by file; the copies are deleted
-afterwards. Where there are none, as on CI, it generates logs. Screenshots go
-to `e2e/test-results/`.
+The machines use Claude Code, Codex and OpenCode logs. For each tool it uses
+**this computer's real logs** when there are any, copied and split between
+the two machines file by file; the copies are deleted afterwards. Where there
+are none, as on CI, it generates logs (Codex's on the first machine,
+OpenCode's on the second). Screenshots go to `e2e/test-results/`.
 
 ## Updating the docs' screenshots
 
 The screenshots in `docs/images/` show the demo data. Run `npm run demo`, then
-capture the Overview (30 days, split by machine) and Machines pages at
-1280 px wide in light and dark mode, at 2× scale.
+capture the Overview (30 days, split by machine, and split by tool), the
+Machines page and the date picker at 1280 px wide in light and dark mode, at
+2× scale.
 
 ## Upgrading ccusage
 
@@ -128,7 +136,11 @@ capture the Overview (30 days, split by machine) and Machines pages at
    platform's npm `integrity` (from `npm view @ccusage/ccusage-<platform>@<version> dist.integrity`).
 2. `go run ./tools/fetchccusage -all -update` downloads every platform, checks
    the integrity and fills in the SHA-256 values.
-3. Run the tests and the rehearsal.
+3. If the new version reads other tools, update `Tools` in
+   `agent/internal/ccusage/tools.go` and `TOOL_NAMES` in
+   `dashboard/src/lib/tools.ts`; the Go and dashboard tests compare both with
+   what `ccusage --help` lists.
+4. Run the tests and the rehearsal.
 
 ## Environment variables
 

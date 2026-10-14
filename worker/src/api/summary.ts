@@ -25,6 +25,7 @@ interface Totals {
 interface Row extends Totals {
   day: string;
   machine_id: string;
+  source: string;
   model: string;
 }
 
@@ -48,7 +49,8 @@ function add(into: Totals, row: Totals): void {
 
 /**
  * GET /api/summary?from=YYYY-MM-DD&to=YYYY-MM-DD (or ?days=N) — usage per
- * day, split by machine and (separately) by model. Defaults to the last 30 days.
+ * day, split by machine, by model and by tool, and each machine's usage per
+ * tool for the whole period. Defaults to the last 30 days.
  *
  * Responds 304 when the dashboard already has the current data (ETag), which
  * keeps D1 reads tiny while a dashboard polls.
@@ -74,13 +76,13 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
   }
 
   const { results } = await c.env.DB.prepare(
-    `SELECT day, machine_id, model,
+    `SELECT day, machine_id, source, model,
             SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
             SUM(cache_creation_tokens) AS cache_creation_tokens,
             SUM(cache_read_tokens) AS cache_read_tokens, SUM(cost_usd) AS cost_usd
        FROM usage_daily
       WHERE day BETWEEN ?1 AND ?2
-      GROUP BY day, machine_id, model
+      GROUP BY day, machine_id, source, model
       ORDER BY day`,
   )
     .bind(from, to)
@@ -88,6 +90,8 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
 
   const byMachine = new Map<string, Totals & { day: string; machine_id: string }>();
   const byModel = new Map<string, Totals & { day: string; model: string }>();
+  const bySource = new Map<string, Totals & { day: string; source: string }>();
+  const machineSource = new Map<string, Totals & { machine_id: string; source: string }>();
   for (const r of results) {
     const mk = `${r.day}|${r.machine_id}`;
     const m = byMachine.get(mk) ?? { day: r.day, machine_id: r.machine_id, ...emptyTotals() };
@@ -97,6 +101,18 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     const d = byModel.get(dk) ?? { day: r.day, model: r.model, ...emptyTotals() };
     add(d, r);
     byModel.set(dk, d);
+    const sk = `${r.day}|${r.source}`;
+    const t = bySource.get(sk) ?? { day: r.day, source: r.source, ...emptyTotals() };
+    add(t, r);
+    bySource.set(sk, t);
+    const ms = `${r.machine_id}|${r.source}`;
+    const u = machineSource.get(ms) ?? {
+      machine_id: r.machine_id,
+      source: r.source,
+      ...emptyTotals(),
+    };
+    add(u, r);
+    machineSource.set(ms, u);
   }
 
   return c.json(
@@ -105,8 +121,12 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
       today,
       from,
       to,
+      /** Every tool the dashboard has seen, in the order they first appeared. */
+      tools: settings.tools,
       by_day_machine: [...byMachine.values()],
       by_day_model: [...byModel.values()],
+      by_day_source: [...bySource.values()],
+      by_machine_source: [...machineSource.values()],
     },
     200,
     { etag },

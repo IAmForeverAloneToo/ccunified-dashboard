@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
-import { IngestPayload, LIMITS, SOURCES } from "../ingest/schema";
+import { INGEST_SCHEMA_VERSIONS, IngestPayload, LIMITS, sourcesOf } from "../ingest/schema";
 import { fail, readJson } from "../lib/http";
-import { bumpDataVersion, getSettings } from "../lib/settings";
+import { bumpDataVersion, getSettings, parseList, setSetting } from "../lib/settings";
 import { latestVersion, learnLatestVersion, pickLatest } from "../lib/updates";
 import { SERVER_VERSION } from "../version";
 
@@ -12,9 +12,10 @@ const MIN_INTERVAL_MS = 1000;
 /**
  * POST /agent/ingest — stores one machine's usage for a date range.
  *
- * All of the machine's rows inside `range` are replaced by the payload's rows,
- * in a single transaction of three statements (the free plan allows 50 queries
- * per request). Rows whose numbers did not change are not rewritten.
+ * All of the machine's rows inside `range` for the tools the upload covers are
+ * replaced by the payload's rows, in a single transaction of a few statements
+ * (the free plan allows 50 queries per request). Rows whose numbers did not
+ * change are not rewritten.
  */
 export async function ingest(c: Context<AppEnv>): Promise<Response> {
   const machine = c.get("machine");
@@ -47,15 +48,34 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
   const a = payload.agent;
   const learned = learnLatestVersion(db, settings, a.version);
 
+  // Remember which tools have reported usage: per machine, and for the whole
+  // dashboard in the order they first appeared (the order of their colors).
+  const reported = [...new Set(rows.map((r) => r.source))];
+  const machineTools = mergeTools(parseList(machine.tools), reported);
+  const dashboardTools = mergeTools(settings.tools, reported);
+  const newTools =
+    dashboardTools.length > settings.tools.length
+      ? setSetting(db, "tools", JSON.stringify(dashboardTools))
+      : null;
+
   const [, deleted, upserted] = await db.batch([
     db
       .prepare(
         `UPDATE machines
             SET last_seen_at = ?1, agent_version = ?2, os = ?3, arch = ?4,
-                ccusage_version = ?5, sync_interval_minutes = ?6
-          WHERE id = ?7`,
+                ccusage_version = ?5, sync_interval_minutes = ?6, tools = ?7
+          WHERE id = ?8`,
       )
-      .bind(now, a.version, a.os, a.arch, a.ccusage_version, a.sync_interval_minutes, machine.id),
+      .bind(
+        now,
+        a.version,
+        a.os,
+        a.arch,
+        a.ccusage_version,
+        a.sync_interval_minutes,
+        JSON.stringify(machineTools),
+        machine.id,
+      ),
     db
       .prepare(
         `DELETE FROM usage_daily
@@ -66,7 +86,7 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
       )
       .bind(
         machine.id,
-        JSON.stringify(SOURCES),
+        JSON.stringify(sourcesOf(payload)),
         payload.range.from,
         payload.range.to,
         JSON.stringify(keep),
@@ -95,6 +115,7 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
       )
       .bind(machine.id, now, JSON.stringify(rows)),
     ...(learned ? [learned] : []),
+    ...(newTools ? [newTools] : []),
   ]);
 
   const changed = (deleted?.meta.changes ?? 0) + (upserted?.meta.changes ?? 0);
@@ -105,9 +126,15 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
     changed_rows: changed,
     timezone: settings.timezone,
     server_version: SERVER_VERSION,
+    schema_versions: INGEST_SCHEMA_VERSIONS,
     latest_version: pickLatest(
       latestVersion(db, settings, c.executionCtx),
       learned ? a.version : null,
     ),
   });
+}
+
+/** `known` followed by the tools in `reported` it doesn't have yet. */
+function mergeTools(known: string[], reported: string[]): string[] {
+  return [...known, ...reported.filter((t) => !known.includes(t))];
 }

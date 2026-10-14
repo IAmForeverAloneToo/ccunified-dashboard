@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { jsonInit, payload, startWorker, type TestWorker } from "./harness";
+import { jsonInit, payload, splitSql, startWorker, type TestWorker } from "./harness";
 
 let w: TestWorker;
 
@@ -185,6 +187,187 @@ describe("storing usage", () => {
       input_tokens: 999_999_999_999_999,
       cost_usd: 0.0000034999999999999995,
     });
+  });
+});
+
+describe("tools other than Claude Code (format 2)", () => {
+  const usage = (name: string, n = 1) => ({
+    model: name,
+    input_tokens: n,
+    output_tokens: n,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    cost_usd: 0.01,
+  });
+  const v2 = (
+    sources: string[],
+    days: unknown[],
+    range = { from: "2026-10-07", to: "2026-10-13" },
+  ) => payload({ schema_version: 2, sources, range, days });
+  const stored = async (machineId: string) =>
+    (
+      await w.sql(
+        "SELECT source, day, model FROM usage_daily WHERE machine_id = ?1 ORDER BY source, day, model",
+        machineId,
+      )
+    ).map((r) => `${r.source} ${r.day} ${r.model}`);
+  const dashboardTools = async () => {
+    const [row] = await w.sql("SELECT value FROM settings WHERE key = 'tools'");
+    return JSON.parse(String(row?.value)) as string[];
+  };
+  const machineTools = async (id: string) => {
+    const [row] = await w.sql("SELECT tools FROM machines WHERE id = ?1", id);
+    return JSON.parse(String(row?.tools)) as string[];
+  };
+
+  test("stores each tool's usage and says which formats the dashboard accepts", async () => {
+    const m = await w.createMachine();
+    const res = await upload(
+      m.token,
+      v2(
+        ["claude", "codex", "opencode"],
+        [
+          { date: "2026-10-12", source: "claude", models: [usage("claude-opus-5-5")] },
+          { date: "2026-10-12", source: "codex", models: [usage("gpt-5.5")] },
+          { date: "2026-10-13", source: "opencode", models: [usage("anthropic/claude-opus-5-5")] },
+        ],
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ changed_rows: 3, schema_versions: [1, 2] });
+    expect(await stored(m.id)).toEqual([
+      "claude 2026-10-12 claude-opus-5-5",
+      "codex 2026-10-12 gpt-5.5",
+      "opencode 2026-10-13 anthropic/claude-opus-5-5",
+    ]);
+  });
+
+  test("only the tools an upload covers are replaced", async () => {
+    const m = await w.createMachine();
+    await upload(
+      m.token,
+      v2(
+        ["claude", "codex"],
+        [
+          { date: "2026-10-12", source: "claude", models: [usage("claude-opus-5-5")] },
+          { date: "2026-10-12", source: "codex", models: [usage("gpt-5.5")] },
+        ],
+      ),
+    );
+    await allowNextUpload(m.id);
+    // Covers Claude Code only (as when ccusage could only read Claude Code): Codex stays.
+    await upload(m.token, v2(["claude"], []));
+    expect(await stored(m.id)).toEqual(["codex 2026-10-12 gpt-5.5"]);
+
+    await allowNextUpload(m.id);
+    // A format 1 upload from an older ccunified covers Claude Code only, too.
+    await upload(m.token, payload({ days: [] }));
+    expect(await stored(m.id)).toEqual(["codex 2026-10-12 gpt-5.5"]);
+
+    await allowNextUpload(m.id);
+    // Covering Codex with no usage clears it.
+    await upload(m.token, v2(["claude", "codex"], []));
+    expect(await stored(m.id)).toEqual([]);
+  });
+
+  test("remembers each machine's tools, and the dashboard's in the order they first appeared", async () => {
+    const before = await dashboardTools();
+    expect(before).not.toContain("gemini");
+    expect(before).not.toContain("qwen");
+    const a = await w.createMachine();
+    const b = await w.createMachine();
+    // Covered but without usage: not a tool this machine reports.
+    await upload(
+      a.token,
+      v2(
+        ["gemini", "qwen"],
+        [{ date: "2026-10-10", source: "gemini", models: [usage("gemini-3-pro")] }],
+      ),
+    );
+    await upload(
+      b.token,
+      v2(
+        ["claude", "qwen", "gemini"],
+        [
+          { date: "2026-10-11", source: "qwen", models: [usage("qwen3-coder")] },
+          { date: "2026-10-11", source: "gemini", models: [] },
+        ],
+      ),
+    );
+    expect(await machineTools(a.id)).toEqual(["gemini"]);
+    expect(await machineTools(b.id)).toEqual(["qwen"]);
+    expect(await dashboardTools()).toEqual([...before, "gemini", "qwen"]);
+
+    // Later uploads add to the lists; nothing is forgotten or reordered.
+    await allowNextUpload(a.id);
+    await upload(
+      a.token,
+      v2(
+        ["gemini", "qwen"],
+        [{ date: "2026-10-12", source: "qwen", models: [usage("qwen3-coder")] }],
+      ),
+    );
+    expect(await machineTools(a.id)).toEqual(["gemini", "qwen"]);
+    expect(await dashboardTools()).toEqual([...before, "gemini", "qwen"]);
+  });
+
+  test("format 2 rules are enforced", async () => {
+    const m = await w.createMachine();
+    const refused = async (body: unknown) => {
+      await allowNextUpload(m.id);
+      const res = await upload(m.token, body);
+      expect(res.status).toBe(400);
+    };
+    await refused(v2([], []));
+    await refused(v2(["Claude Code"], []));
+    await refused(v2(["claude", "claude"], []));
+    await refused(
+      v2(["claude"], [{ date: "2026-10-12", source: "codex", models: [usage("gpt-5.5")] }]),
+    );
+    // Format 1 is Claude Code only.
+    await refused(
+      payload({ days: [{ date: "2026-10-12", source: "codex", models: [usage("gpt-5.5")] }] }),
+    );
+    // At most 1000 tool-days per upload.
+    const sources = Array.from({ length: 11 }, (_, i) => `tool${i}`);
+    const days = sources.flatMap((source) =>
+      Array.from({ length: 91 }, (_, i) => ({
+        date: new Date(Date.UTC(2026, 6, 1 + i)).toISOString().slice(0, 10),
+        source,
+        models: [],
+      })),
+    );
+    await refused(v2(sources, days, { from: "2026-07-01", to: "2026-09-29" }));
+    await allowNextUpload(m.id);
+    const ok = await upload(
+      m.token,
+      v2(sources, days.slice(0, 1000), { from: "2026-07-01", to: "2026-09-29" }),
+    );
+    expect(ok.status).toBe(200);
+  });
+});
+
+describe("the database update for format 2", () => {
+  test("marks earlier usage as Claude Code's", async () => {
+    const m = await w.createMachine();
+    const idle = await w.createMachine();
+    await upload(m.token, payload());
+    // Undo what the Worker recorded, then run the migration's data statements again.
+    await w.sql("UPDATE machines SET tools = '[]'");
+    await w.sql("DELETE FROM settings WHERE key = 'tools'");
+    const migration = readFileSync(
+      join(import.meta.dirname, "../migrations/0002_tools.sql"),
+      "utf8",
+    );
+    for (const statement of splitSql(migration).filter((q) => !q.startsWith("ALTER"))) {
+      await w.sql(statement);
+    }
+    const [row] = await w.sql("SELECT value FROM settings WHERE key = 'tools'");
+    expect(row?.value).toBe('["claude"]');
+    const tools = async (id: string) =>
+      (await w.sql("SELECT tools FROM machines WHERE id = ?1", id))[0]?.tools;
+    expect(await tools(m.id)).toBe('["claude"]');
+    expect(await tools(idle.id)).toBe("[]");
   });
 });
 

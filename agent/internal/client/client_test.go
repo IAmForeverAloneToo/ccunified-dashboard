@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,5 +55,21 @@ func TestHealth(t *testing.T) {
 	v, err := New(srv.URL, "").Health(context.Background())
 	if err != nil || v != "1.2.3" {
 		t.Fatalf("%q %v", v, err)
+	}
+}
+
+func TestHealthInfoSaysWhichUploadFormatsAreAccepted(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"ok":true,"version":"0.1.2"}`:                         "[1]", // before formats were announced
+		`{"ok":true,"version":"0.2.0","schema_versions":[1,2]}`: "[1 2]",
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(body))
+		}))
+		info, err := New(srv.URL, "").HealthInfo(context.Background())
+		srv.Close()
+		if err != nil || fmt.Sprint(info.SchemaVersions) != want {
+			t.Fatalf("%s: %+v %v", body, info, err)
+		}
 	}
 }

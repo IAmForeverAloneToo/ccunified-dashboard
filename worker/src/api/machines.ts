@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { fail, readJson } from "../lib/http";
 import { compareVersions } from "../lib/semver";
-import { getSettings } from "../lib/settings";
+import { getSettings, parseList } from "../lib/settings";
 import { latestVersion } from "../lib/updates";
 
 /** Machine names: 1–64 printable characters, no control characters. */
@@ -25,6 +25,7 @@ interface MachineDbRow {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  tools: string;
 }
 
 /** A machine is "late" once it misses two syncs plus ten minutes of slack. */
@@ -41,7 +42,7 @@ export async function listMachines(c: Context<AppEnv>): Promise<Response> {
     getSettings(c.env.DB),
     c.env.DB.prepare(
       `SELECT id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes,
-              created_at, last_seen_at, revoked_at
+              created_at, last_seen_at, revoked_at, tools
          FROM machines
         ORDER BY revoked_at IS NOT NULL, name COLLATE NOCASE`,
     ).all<MachineDbRow>(),
@@ -52,6 +53,7 @@ export async function listMachines(c: Context<AppEnv>): Promise<Response> {
     latest_version: latest,
     machines: results.map((m) => ({
       ...m,
+      tools: parseList(m.tools),
       status: machineStatus(m, now),
       update_available: latest !== null && (compareVersions(m.agent_version, latest) ?? 0) < 0,
     })),

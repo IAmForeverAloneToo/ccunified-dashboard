@@ -14,7 +14,7 @@ export const machineAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     fail(401, "invalid_token", {}, { "www-authenticate": "Bearer" });
   }
   const machine = await c.env.DB.prepare(
-    "SELECT id, name, last_seen_at, revoked_at FROM machines WHERE token_hash = ?1",
+    "SELECT id, name, last_seen_at, revoked_at, tools FROM machines WHERE token_hash = ?1",
   )
     .bind(await sha256Hex(token))
     .first<MachineRow>();

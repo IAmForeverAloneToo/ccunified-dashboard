@@ -12,12 +12,13 @@ import { rangePicker } from "../lib/daterange";
 import { daysInclusive, formatRange, isDate, MAX_RANGE_DAYS } from "../lib/dates";
 import { type Child, fill, h, s, segmented } from "../lib/dom";
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
+import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
 
 type RangeKey = "1" | "7" | "30" | "90" | "365" | "all";
 /** A preset, or "custom" for dates picked in the calendar. */
 type Period = RangeKey | "custom";
-type SplitKey = "machine" | "model";
+type SplitKey = "machine" | "model" | "tool";
 type MeasureKey = "tokens" | "output" | "cost";
 
 const RANGES: [RangeKey, string][] = [
@@ -31,6 +32,7 @@ const RANGES: [RangeKey, string][] = [
 const SPLITS: [SplitKey, string][] = [
   ["machine", "Machine"],
   ["model", "Model"],
+  ["tool", "Tool"],
 ];
 const MEASURES: [MeasureKey, string][] = [
   ["tokens", "All tokens"],
@@ -75,20 +77,33 @@ function addInto(into: Totals, t: Totals): void {
 
 // ---------- Colors that follow the entity, never its rank ----------
 
-/** Model families get fixed chart colors; versions of a family share one. */
-const FAMILIES: [string, string][] = [
-  ["opus", "Opus"],
-  ["sonnet", "Sonnet"],
-  ["haiku", "Haiku"],
-  ["fable", "Fable"],
+/**
+ * Model families get fixed chart colors; versions of a family share one.
+ * Names are matched in this order, so "anthropic/claude-opus-5-5" is Opus.
+ */
+const FAMILIES: [id: string, label: string, match: RegExp][] = [
+  ["opus", "Opus", /opus/],
+  ["sonnet", "Sonnet", /sonnet/],
+  ["haiku", "Haiku", /haiku/],
+  ["fable", "Fable", /fable/],
+  ["gpt", "GPT", /gpt|codex|(^|\/)o\d/],
+  ["gemini", "Gemini", /gemini/],
+  ["grok", "Grok", /grok/],
 ];
 
-export function modelFamily(model: string): { id: string; label: string; colorClass: string } {
+type Family = { id: string; label: string; colorClass: string };
+
+const familySeries: Family[] = FAMILIES.map(([id, label], i) => ({
+  id,
+  label,
+  colorClass: `s${i + 1}`,
+}));
+const otherModels: Family = { id: "other", label: "Other models", colorClass: "s-other" };
+
+export function modelFamily(model: string): Family {
   const lower = model.toLowerCase();
-  const index = FAMILIES.findIndex(([key]) => lower.includes(key));
-  const family = FAMILIES[index];
-  if (!family) return { id: "other", label: "Other models", colorClass: "s-other" };
-  return { id: family[0], label: family[1], colorClass: `s${index + 1}` };
+  const index = FAMILIES.findIndex(([, , match]) => match.test(lower));
+  return familySeries[index] ?? otherModels;
 }
 
 /**
@@ -226,6 +241,7 @@ export async function overviewPage(ctx: PageContext) {
   const chartBox = h("div", { class: "chart" });
   const tableToggle = h("button", { type: "button", class: "small" }, "Show as table");
   const breakdown = h("div", { class: "card" });
+  const toolsCard = h("div", { class: "card" });
   const models = h("div", { class: "card" });
 
   const periodText = h("span");
@@ -239,11 +255,17 @@ export async function overviewPage(ctx: PageContext) {
     update({ range: v }),
   );
   periodFilter.append(customButton);
+  const splitFilter = segmented("by", "Split by", SPLITS, state.split, (v) => update({ split: v }));
+  // "Tool" is offered once a second tool reports usage.
+  const toolOption = splitFilter
+    .querySelector<HTMLInputElement>('input[value="tool"]')
+    ?.closest("label");
+  if (toolOption) toolOption.hidden = state.split !== "tool";
   const filters = h(
     "div",
     { class: "filters", role: "group", "aria-label": "Filters" },
     periodFilter,
-    segmented("by", "Split by", SPLITS, state.split, (v) => update({ split: v })),
+    splitFilter,
     segmented("measure", "Show", MEASURES, state.measure, (v) => update({ measure: v })),
   );
 
@@ -269,6 +291,7 @@ export async function overviewPage(ctx: PageContext) {
       chartBox,
     ),
     breakdown,
+    toolsCard,
     models,
   );
 
@@ -371,10 +394,14 @@ export async function overviewPage(ctx: PageContext) {
         s.from === s.to ? day(s.to, "long") : `${day(s.from, "long")} – ${day(s.to, "long")}`;
       tzNote.textContent = `${period} · days in ${s.timezone}`;
     }
+    const multiTool = s.tools.length > 1 || new Set(s.by_day_source.map((r) => r.source)).size > 1;
+    if (toolOption) toolOption.hidden = !multiTool && state.split !== "tool";
+    toolsCard.hidden = !multiTool;
     drawBanners();
-    drawTiles(s);
+    drawTiles(s, multiTool);
     drawChart(s);
     drawBreakdown(s);
+    if (multiTool) drawTools(s);
     drawModels(s);
   }
 
@@ -416,7 +443,7 @@ export async function overviewPage(ctx: PageContext) {
     fill(banners, items);
   }
 
-  function drawTiles(s: Summary) {
+  function drawTiles(s: Summary, multiTool: boolean) {
     const total = emptyTotals();
     for (const r of s.by_day_machine) addInto(total, r);
     const active = machines.filter((m) => m.revoked_at === null);
@@ -436,7 +463,11 @@ export async function overviewPage(ctx: PageContext) {
         compactNumber(totalTokens(total)),
         `${compactNumber(total.cache_read_tokens)} of them cache reads`,
       ),
-      tile("Output tokens", compactNumber(total.output_tokens), "Text Claude wrote"),
+      tile(
+        "Output tokens",
+        compactNumber(total.output_tokens),
+        multiTool ? "Text the models wrote" : "Text Claude wrote",
+      ),
       tile("Estimated cost", money(total.cost_usd), "At API prices, not your subscription bill"),
       tile(
         "Machines reporting",
@@ -461,10 +492,20 @@ export async function overviewPage(ctx: PageContext) {
       }
       return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? "other" };
     }
+    if (state.split === "tool") {
+      const map = toolSeries(
+        s.tools,
+        s.by_day_source.map((r) => r.source),
+      );
+      const seen = new Set(s.by_day_source.map((r) => map.get(r.source)?.id ?? "other"));
+      const all = [...new Map([...map.values()].map((sr) => [sr.id, sr])).values()];
+      return {
+        series: all.filter((sr) => seen.has(sr.id)),
+        keyOf: (r) => map.get(String(r.source))?.id ?? "other",
+      };
+    }
     const seen = new Set(s.by_day_model.map((r) => modelFamily(r.model).id));
-    const series = [...FAMILIES.map(([key]) => modelFamily(key)), modelFamily("")]
-      .filter((f) => seen.has(f.id))
-      .map((f) => ({ id: f.id, label: f.label, colorClass: f.colorClass }));
+    const series = [...familySeries, otherModels].filter((f) => seen.has(f.id));
     return { series, keyOf: (r) => modelFamily(String(r.model)).id };
   }
 
@@ -472,7 +513,12 @@ export async function overviewPage(ctx: PageContext) {
     const days = Math.round((Date.parse(s.to) - Date.parse(s.from)) / 86_400_000) + 1;
     const bucket = bucketFor(days);
     const { series, keyOf } = seriesFor(s);
-    const rows = state.split === "machine" ? s.by_day_machine : s.by_day_model;
+    const rows =
+      state.split === "machine"
+        ? s.by_day_machine
+        : state.split === "tool"
+          ? s.by_day_source
+          : s.by_day_model;
     const measure = measureOf[state.measure];
 
     const columns: Column[] = bucketKeys(s.from, s.to, bucket).map((key) => ({
@@ -675,6 +721,35 @@ export async function overviewPage(ctx: PageContext) {
             colorClass: state.split === "machine" ? color : undefined,
             totals,
             dim: m?.revoked_at !== null,
+          };
+        }),
+      ),
+    );
+  }
+
+  function drawTools(s: Summary) {
+    const map = toolSeries(
+      s.tools,
+      s.by_day_source.map((r) => r.source),
+    );
+    const byTool = new Map<string, Totals>();
+    for (const r of s.by_day_source) {
+      const t = byTool.get(r.source) ?? emptyTotals();
+      addInto(t, r);
+      byTool.set(r.source, t);
+    }
+    fill(
+      toolsCard,
+      breakdownTable(
+        "Tools",
+        "Usage in this period, per tool.",
+        [...byTool].map(([id, totals]) => {
+          const sr = map.get(id);
+          return {
+            // Folded tools still get their own row, under their own name.
+            label: sr?.id === "other" ? toolName(id) : (sr?.label ?? toolName(id)),
+            colorClass: state.split === "tool" ? sr?.colorClass : undefined,
+            totals,
           };
         }),
       ),

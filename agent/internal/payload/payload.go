@@ -13,16 +13,26 @@ import (
 	"time"
 )
 
-// SchemaVersion is the payload format version this agent produces.
-const SchemaVersion = 1
+// Upload formats. Format 2 carries usage from every tool ccusage reads;
+// format 1 carries Claude Code only and is all that dashboards from
+// ccunified 0.1 accept.
+const (
+	SchemaV1      = 1
+	SchemaV2      = 2
+	SchemaVersion = SchemaV2 // the newest format this agent produces
+)
 
 // Limits mirrored from the Worker. Larger backfills are split into several uploads.
 const (
-	MaxRangeDays     = 100
+	MaxRangeDays = 100
+	// MaxDaysPerUpload limits format 1 (one entry per day).
 	MaxDaysPerUpload = 100
-	MaxModelsPerDay  = 50
-	maxTokens        = 1_000_000_000_000_000
-	maxCostUSD       = 1_000_000_000
+	// MaxEntriesPerUpload limits format 2 (one entry per tool and day).
+	MaxEntriesPerUpload = 1000
+	MaxSources          = 64
+	MaxModelsPerDay     = 50
+	maxTokens           = 1_000_000_000_000_000
+	maxCostUSD          = 1_000_000_000
 )
 
 // SourceClaude identifies usage read from Claude Code's logs.
@@ -34,7 +44,10 @@ type Payload struct {
 	Agent         Agent  `json:"agent"`
 	Timezone      string `json:"timezone"`
 	Range         Range  `json:"range"`
-	Days          []Day  `json:"days"`
+	// Sources lists the tools a format 2 upload covers: the server replaces
+	// only their rows in Range. Format 1 has no sources (Claude Code only).
+	Sources []string `json:"sources,omitempty"`
+	Days    []Day    `json:"days"`
 }
 
 // Range is the inclusive span of dates an upload covers. The server replaces
@@ -73,6 +86,7 @@ type Model struct {
 var (
 	versionRe = regexp.MustCompile(`^[0-9A-Za-z.+-]{1,64}$`)
 	modelRe   = regexp.MustCompile(`^[\x21-\x7e]{1,200}$`)
+	sourceRe  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	dateRe    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
@@ -82,8 +96,9 @@ func (p *Payload) Validate() error {
 	var errs []error
 	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 
-	if p.SchemaVersion != SchemaVersion {
-		fail("schema_version: got %d, want %d", p.SchemaVersion, SchemaVersion)
+	v1 := p.SchemaVersion == SchemaV1
+	if !v1 && p.SchemaVersion != SchemaV2 {
+		fail("schema_version: got %d, want %d or %d", p.SchemaVersion, SchemaV1, SchemaV2)
 	}
 	if !versionRe.MatchString(p.Agent.Version) {
 		fail("agent.version: invalid %q", p.Agent.Version)
@@ -122,8 +137,31 @@ func (p *Payload) Validate() error {
 	if p.Days == nil {
 		fail("days: must be a list, not null")
 	}
-	if len(p.Days) > MaxDaysPerUpload {
-		fail("days: %d entries, at most %d per upload", len(p.Days), MaxDaysPerUpload)
+	sources := map[string]bool{}
+	if v1 {
+		if p.Sources != nil {
+			fail("sources: not part of format 1")
+		}
+		if len(p.Days) > MaxDaysPerUpload {
+			fail("days: %d entries, at most %d per upload", len(p.Days), MaxDaysPerUpload)
+		}
+		sources[SourceClaude] = true
+	} else {
+		if len(p.Sources) == 0 || len(p.Sources) > MaxSources {
+			fail("sources: %d entries, must be 1-%d", len(p.Sources), MaxSources)
+		}
+		for i, src := range p.Sources {
+			if !sourceRe.MatchString(src) {
+				fail("sources[%d]: invalid %q", i, src)
+			}
+			if sources[src] {
+				fail("sources[%d]: duplicate %q", i, src)
+			}
+			sources[src] = true
+		}
+		if len(p.Days) > MaxEntriesPerUpload {
+			fail("days: %d entries, at most %d per upload", len(p.Days), MaxEntriesPerUpload)
+		}
 	}
 
 	seenDays := make(map[string]bool, len(p.Days))
@@ -133,8 +171,8 @@ func (p *Payload) Validate() error {
 		} else if fromErr == nil && toErr == nil && (d.Date < p.Range.From || d.Date > p.Range.To) {
 			fail("days[%d].date: %s is outside range %s..%s", i, d.Date, p.Range.From, p.Range.To)
 		}
-		if d.Source != SourceClaude {
-			fail("days[%d].source: unsupported %q", i, d.Source)
+		if !sources[d.Source] {
+			fail("days[%d].source: %q is not one of the upload's sources", i, d.Source)
 		}
 		key := d.Source + "/" + d.Date
 		if seenDays[key] {

@@ -28,9 +28,15 @@ Uploads this machine's usage now. The background sync runs this command, so
 you rarely need it, but it's always safe to run: sending a day twice never
 counts it twice.
 
-A normal sync re-sends the last 7 days. The first sync on a machine, and the
-first after the dashboard's time zone changes, sends the whole history still on
-disk.
+It uploads the usage of every coding tool ccusage finds on the machine:
+Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and the others
+ccusage supports. A dashboard that hasn't been updated to ccunified 0.2 yet
+accepts Claude Code's usage only; `sync` then says to run `ccunified server
+update`, and the first sync after that uploads every tool's history.
+
+A normal sync re-sends the last 7 days. The first sync on a machine, the
+first after the dashboard's time zone changes, and the first after the
+dashboard starts accepting every tool send the whole history still on disk.
 
 | Option | |
 |---|---|
@@ -41,8 +47,8 @@ disk.
 
 Shows the dashboard address, this machine's name, the time zone, the upload
 interval, the state of the background sync, the last upload and any problem
-since, whether an update is available, and whether the bundled ccusage passed
-its integrity check.
+since, the tools this machine has reported usage for, whether an update is
+available, and whether the bundled ccusage passed its integrity check.
 
 ### `ccunified config`
 
@@ -136,6 +142,7 @@ changed.
 |---|---|
 | `CCUNIFIED_HOME` | Use this folder for the settings, state and log instead of the default |
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its data, if not in the default place (read by ccusage) |
+| `CODEX_HOME` and the like | Where other tools keep their data, if not in the default place; ccusage reads the same variables the tools themselves use |
 | `CCUNIFIED_NO_SETUP=1` | Installers only: install without starting `ccunified setup` |
 
 Variables used for testing and development are listed in

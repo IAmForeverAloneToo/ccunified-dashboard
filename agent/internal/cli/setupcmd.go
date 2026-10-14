@@ -102,10 +102,10 @@ func hooks(p *prompt.Prompter) *setup.Hooks {
 			if err != nil {
 				return "", err
 			}
-			if res.NoClaudeData {
-				return "Connected. No Claude Code logs on this machine yet; usage appears after you use it here", nil
+			if res.DaysWithUsage == 0 {
+				return "Connected. No usage on this machine yet; it appears after you use Claude Code (or another tool ccusage reads) here", nil
 			}
-			return fmt.Sprintf("Uploaded this machine's history (%d day(s) with usage)", res.DaysWithUsage), nil
+			return fmt.Sprintf("Uploaded this machine's history (%d day(s) with usage; %s)", res.DaysWithUsage, toolList(res.Tools)), nil
 		},
 	}
 }

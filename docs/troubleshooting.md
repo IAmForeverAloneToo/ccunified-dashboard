@@ -103,10 +103,21 @@ the old machine first.
 
 ## Uploads
 
-**"No Claude Code logs on this machine yet"**: nothing to upload until Claude
-Code has been used on this machine. If Claude Code keeps its data in a
-non-standard place, set `CLAUDE_CONFIG_DIR` (see the
+**"No usage found on this machine yet"**: nothing to upload until Claude Code
+(or another tool ccusage reads) has been used on this machine. If a tool keeps
+its data in a non-standard place, set the variable it uses, such as
+`CLAUDE_CONFIG_DIR` or `CODEX_HOME` (see the
 [command reference](commands.md#environment-variables)).
+
+**"The dashboard accepts Claude Code usage only"**: the dashboard on
+Cloudflare is from ccunified 0.1. Run `ccunified server update` on a machine
+with the new version; each machine then uploads every tool's history on its
+next sync.
+
+**A tool's usage is missing.** `ccunified status` lists the tools the machine
+has reported. If a *Note* says only Claude Code's usage could be read, ccusage
+failed to read the others; the message says why, and the next sync tries
+again. Tools ccusage doesn't support can't be shown.
 
 **"couldn't reach the dashboard"**: a network problem. The background sync
 tries again on its next run; to try now, run `ccunified sync`.
@@ -147,13 +158,13 @@ your machines uploads with it.
 
 ## Numbers look different from elsewhere
 
-- **Costs are estimates** at Anthropic's API prices, calculated by ccusage. A
-  Claude subscription isn't billed per token.
+- **Costs are estimates** at API prices, calculated by ccusage (for OpenCode,
+  the cost OpenCode recorded). A subscription isn't billed per token.
 - **Days follow the dashboard's time zone**, so a day's numbers can differ
   from a tool that uses your local time zone or UTC.
 - **History before a machine joined** is limited to the logs still on it.
-  Claude Code deletes old session logs (after 30 days by default), so older
-  usage can't be uploaded. From the day a machine joins, the dashboard keeps
+  Claude Code deletes old session logs (after 30 days by default), and other
+  tools may too, so older usage can't be uploaded. From the day a machine joins, the dashboard keeps
   its history for good.
 
 ## Logging in

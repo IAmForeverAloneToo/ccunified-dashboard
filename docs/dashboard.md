@@ -29,11 +29,12 @@ buttons.
 
 ## Overview
 
-The overview answers "how much Claude Code did I use, and where":
+The overview answers "how much did I use my coding tools, and where":
 
 - **Period:** today, 7, 30 or 90 days, a year, or all time (*All* starts at the
   first day with any usage), or any dates you pick with **Custom** (see below).
-- **Split by:** machine or model.
+- **Split by:** machine, model, or tool (*Tool* appears once a second tool
+  has reported usage).
 - **Show:** all tokens (input, output and cache), output tokens only, or
   estimated cost.
 - **Totals** for the period: tokens (with how many were cache reads), output
@@ -41,8 +42,9 @@ The overview answers "how much Claude Code did I use, and where":
 - **Chart:** one column per day (per week or month for long periods), stacked
   by machine or model. Hover over or tab to a column to see its numbers;
   **Show as table** shows the same data as a table.
-- **Machines and Models tables** with each one's input, output, cache and total
-  tokens, estimated cost and share of the period.
+- **Machines, Tools and Models tables** with each one's input, output, cache
+  and total tokens, estimated cost and share of the period. The Tools table
+  appears once a second tool has reported usage.
 - **Notices** when machines are waiting for approval or haven't reported on
   schedule.
 
@@ -75,17 +77,33 @@ Click **Custom** next to the period buttons:
   Down by month (with Shift, by year), Home and End to the start and end of
   the week, and Enter picks a day.
 
-Models are grouped into families in the chart (Opus, Sonnet, Haiku, Fable and
-other models); the Models table lists every exact model name.
+### Tools and models
 
-Costs are **estimates at Anthropic's API prices**, calculated by ccusage on
-each machine. A Claude subscription isn't billed per token, so treat them as a
-measure of usage.
+Each machine uploads the usage of every coding tool ccusage finds on it, such
+as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/tools-dark.png">
+  <img alt="The overview's chart split by tool: daily tokens stacked by Claude Code, Codex, Gemini CLI and OpenCode" src="images/tools-light.png">
+</picture>
+
+- **Colors:** each tool keeps its color: tools get colors in the order the
+  dashboard first saw them. Past eight tools, the newest share a gray *Other
+  tools* in the chart (the Tools table still lists each one).
+- **Models** are grouped into families in the chart (Opus, Sonnet, Haiku,
+  Fable, GPT, Gemini, Grok and other models), whichever tool used them; the
+  Models table lists every exact model name. A model used through several
+  tools (say, Claude Sonnet in Claude Code and in OpenCode) is one model.
+
+Costs are **estimates at API prices**, calculated by ccusage on each machine
+(OpenCode's are the costs OpenCode itself recorded). A subscription isn't
+billed per token, so treat them as a measure of usage.
 
 ## Machines
 
 Every machine that uploads to the dashboard, with its status, last upload,
-operating system, ccunified version, upload interval and 30-day token total.
+operating system, the tools it has reported (once there's more than one),
+ccunified version, upload interval and 30-day token total.
 Admins can **Rename** and **Revoke** machines here. The *Add a machine* card
 shows the install commands and your dashboard's address. Machine statuses and
 removing machines are explained in [Add machines](adding-machines.md#machine-status).

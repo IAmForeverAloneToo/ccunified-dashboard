@@ -3,6 +3,8 @@ export interface Settings {
   dataVersion: number;
   latestVersion: string | null;
   latestCheckedAt: number | null;
+  /** Every tool the dashboard has seen, in the order they first appeared. */
+  tools: string[];
 }
 
 export async function getSettings(db: D1Database): Promise<Settings> {
@@ -17,7 +19,18 @@ export async function getSettings(db: D1Database): Promise<Settings> {
     dataVersion: Number(map.get("data_version") ?? "0"),
     latestVersion: map.get("latest_version") ?? null,
     latestCheckedAt: checked ? Number(checked) : null,
+    tools: parseList(map.get("tools")),
   };
+}
+
+/** Reads a JSON array of strings, ignoring anything else. */
+export function parseList(json: string | null | undefined): string[] {
+  try {
+    const v: unknown = JSON.parse(json ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function setSetting(db: D1Database, key: string, value: string): D1PreparedStatement {

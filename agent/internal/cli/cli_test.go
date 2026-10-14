@@ -21,17 +21,27 @@ import (
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
 )
 
-// fakeDashboard accepts uploads that pass the published JSON Schema.
+// fakeDashboard accepts uploads that pass the published JSON Schema. A legacy
+// one plays a dashboard from ccunified 0.1, which accepts Claude Code only.
 type fakeDashboard struct {
 	t        *testing.T
 	schema   *jsonschema.Schema
 	timezone string
 	token    string
+	legacy   bool
 	mu       sync.Mutex
 	uploads  []payload.Payload
 }
 
 func (d *fakeDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+		if d.legacy {
+			io.WriteString(w, `{"ok":true,"version":"0.1.2"}`)
+		} else {
+			io.WriteString(w, `{"ok":true,"version":"9.9.9","schema_versions":[1,2]}`)
+		}
+		return
+	}
 	if r.URL.Path != "/agent/ingest" || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
@@ -55,6 +65,11 @@ func (d *fakeDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := dec.Decode(&p); err != nil {
 		d.t.Errorf("decode: %v", err)
 	}
+	if d.legacy && p.SchemaVersion != 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":"invalid_request"}`)
+		return
+	}
 	if p.Timezone != d.timezone {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "timezone_mismatch", "timezone": d.timezone})
@@ -63,9 +78,13 @@ func (d *fakeDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	d.uploads = append(d.uploads, p)
 	d.mu.Unlock()
-	json.NewEncoder(w).Encode(map[string]any{
+	answer := map[string]any{
 		"ok": true, "changed_rows": len(p.Days), "timezone": d.timezone, "server_version": "9.9.9", "latest_version": "9.9.9",
-	})
+	}
+	if !d.legacy {
+		answer["schema_versions"] = []int{1, 2}
+	}
+	json.NewEncoder(w).Encode(answer)
 }
 
 func setupTest(t *testing.T) (*fakeDashboard, *Env, *bytes.Buffer) {
@@ -78,9 +97,16 @@ func setupTest(t *testing.T) (*fakeDashboard, *Env, *bytes.Buffer) {
 		t.Skip("pinned ccusage not fetched (go run ./tools/fetchccusage)")
 	}
 	claude, _ := filepath.Abs(filepath.Join("..", "ccusage", "testdata", "claude"))
+	codex, _ := filepath.Abs(filepath.Join("..", "ccusage", "testdata", "codex"))
 	t.Setenv("CCUNIFIED_HOME", t.TempDir())
 	t.Setenv("CCUNIFIED_CCUSAGE", bin)
 	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	t.Setenv("CODEX_HOME", codex)
+	// Keep ccusage away from any other tools' logs on this computer.
+	home := t.TempDir()
+	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(v, home)
+	}
 	t.Setenv("CCUNIFIED_CCUSAGE_OFFLINE", "1")
 
 	c := jsonschema.NewCompiler()
@@ -119,20 +145,29 @@ func TestSyncUploadsRealUsage(t *testing.T) {
 		if u.Range.From != want {
 			t.Fatalf("gap before %s (want %s)", u.Range.From, want)
 		}
+		if u.SchemaVersion != 2 || len(u.Sources) != len(ccusage.Tools) {
+			t.Fatalf("format %d covering %v", u.SchemaVersion, u.Sources)
+		}
 		next, _ := time.Parse(time.DateOnly, u.Range.To)
 		want = next.AddDate(0, 0, 1).Format(time.DateOnly)
 		for _, d := range u.Days {
-			days[d.Date] = d
+			days[d.Date+" "+d.Source] = d
 		}
 	}
 	if last := dash.uploads[len(dash.uploads)-1].Range.To; last < today {
 		t.Fatalf("history ends %s, before today %s", last, today)
 	}
-	if len(days) != 3 {
+	if len(days) != 4 {
 		t.Fatalf("days with usage: %v", days)
 	}
-	if d := days["2026-10-13"]; len(d.Models) != 1 || d.Models[0].InputTokens != 100 || d.Models[0].CostUSD <= 0 {
+	if d := days["2026-10-13 claude"]; len(d.Models) != 1 || d.Models[0].InputTokens != 100 || d.Models[0].CostUSD <= 0 {
 		t.Fatalf("2026-10-13: %+v", d)
+	}
+	if d := days["2026-10-13 codex"]; len(d.Models) != 1 || d.Models[0].Model != "gpt-5.5" || d.Models[0].CacheReadTokens != 20000 {
+		t.Fatalf("2026-10-13 Codex: %+v", d)
+	}
+	if !strings.Contains(out.String(), "Tools: Claude Code, Codex") {
+		t.Fatalf("output: %s", out)
 	}
 	if u := dash.uploads[0]; u.Agent.OS != runtime.GOOS || u.Agent.CcusageVersion != ccusage.Version() || u.Agent.SyncIntervalMinutes != 30 {
 		t.Fatalf("agent info: %+v", u.Agent)
@@ -155,10 +190,44 @@ func TestSyncUploadsRealUsage(t *testing.T) {
 	if code := Main([]string{"status"}, env); code != 0 {
 		t.Fatalf("status exit %d", code)
 	}
-	for _, s := range []string{"Test PC", "Last upload:  just now", "ccusage:", ", ok"} {
+	for _, s := range []string{"Test PC", "Last upload:  just now", "Tools:        Claude Code, Codex", "ccusage:", ", ok"} {
 		if !strings.Contains(out.String(), s) {
 			t.Errorf("status lacks %q:\n%s", s, out)
 		}
+	}
+}
+
+func TestSyncToAnOlderDashboardSendsClaudeCodeOnly(t *testing.T) {
+	dash, env, out := setupTest(t)
+	dash.legacy = true
+	if code := Main([]string{"sync"}, env); code != 0 {
+		t.Fatalf("sync exit %d: %s", code, out)
+	}
+	for _, u := range dash.uploads {
+		if u.SchemaVersion != 1 {
+			t.Fatalf("format %d sent to an older dashboard", u.SchemaVersion)
+		}
+		for _, d := range u.Days {
+			if d.Source != "claude" {
+				t.Fatalf("%s usage sent to an older dashboard", d.Source)
+			}
+		}
+	}
+	if !strings.Contains(out.String(), "run: ccunified server update") {
+		t.Fatalf("output: %s", out)
+	}
+
+	// Once the dashboard is updated, the next sync uploads every tool's history.
+	dash.legacy = false
+	dash.uploads = nil
+	out.Reset()
+	if code := Main([]string{"sync"}, env); code != 0 {
+		t.Fatalf("sync exit %d: %s", code, out)
+	}
+	last := dash.uploads[len(dash.uploads)-1]
+	if last.SchemaVersion != 2 || !strings.Contains(out.String(), "full history (2026-10-10 to") ||
+		!strings.Contains(out.String(), "Tools: Claude Code, Codex") {
+		t.Fatalf("uploads: %+v\noutput: %s", dash.uploads, out)
 	}
 }
 
@@ -178,7 +247,7 @@ func TestSyncFollowsTheDashboardsTimezone(t *testing.T) {
 	// In Toronto the 23:30 and 02:00 UTC requests share 2026-10-13.
 	for _, u := range dash.uploads {
 		for _, d := range u.Days {
-			if d.Date == "2026-10-13" && len(d.Models) != 2 {
+			if d.Date == "2026-10-13" && d.Source == "claude" && len(d.Models) != 2 {
 				t.Fatalf("2026-10-13 in Toronto: %+v", d.Models)
 			}
 			if d.Date == "2026-10-14" {

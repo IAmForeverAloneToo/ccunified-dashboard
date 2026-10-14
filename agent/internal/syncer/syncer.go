@@ -6,6 +6,11 @@
 // Later syncs re-send the last 7 days: the dashboard replaces each uploaded
 // range, so sending a day twice never counts it twice, and missed syncs are
 // filled in by the next one.
+//
+// Usage comes from every tool ccusage reads (upload format 2). A dashboard
+// from ccunified 0.1 accepts Claude Code alone (format 1); once it is updated
+// and says it accepts format 2, the whole history is uploaded again with
+// every tool.
 package syncer
 
 import (
@@ -15,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/ccusage"
@@ -35,9 +41,10 @@ type Usage interface {
 	Daily(ctx context.Context, opts ccusage.Options) (*ccusage.Report, error)
 }
 
-// Uploader sends payloads (the dashboard client, or a fake in tests).
+// Uploader talks to the dashboard (the dashboard client, or a fake in tests).
 type Uploader interface {
 	Ingest(ctx context.Context, p *payload.Payload) (*client.IngestResult, error)
+	HealthInfo(ctx context.Context) (*client.HealthInfo, error)
 }
 
 // Syncer runs one sync.
@@ -63,7 +70,12 @@ type Result struct {
 	Uploads       int
 	DaysWithUsage int
 	ChangedRows   int
-	NoClaudeData  bool
+	// Tools are the tools with usage in the uploaded range.
+	Tools []string
+	// Format is the upload format used (1: Claude Code only, 2: every tool).
+	Format int
+	// Warning is a problem the sync worked around.
+	Warning       string
 	LatestVersion string
 }
 
@@ -94,7 +106,7 @@ func (s *Syncer) Run(ctx context.Context) (*Result, error) {
 		s.Sleep = sleepCtx
 	}
 	s.State.LastAttemptAt = s.Now()
-	res, err := s.run(ctx, false)
+	res, err := s.run(ctx, retries{})
 	if err != nil {
 		s.State.LastError = err.Error()
 		return res, err
@@ -103,23 +115,60 @@ func (s *Syncer) Run(ctx context.Context) (*Result, error) {
 	s.State.LastSuccessAt = s.Now()
 	s.State.LastChanged = res.ChangedRows
 	s.State.LastDays = res.DaysWithUsage
-	s.State.NoClaudeData = res.NoClaudeData
+	s.State.LastWarning = res.Warning
+	for _, t := range res.Tools {
+		if !slices.Contains(s.State.Tools, t) {
+			s.State.Tools = append(s.State.Tools, t)
+		}
+	}
 	if res.LatestVersion != "" {
 		s.State.LatestVersion = res.LatestVersion
 	}
 	return res, nil
 }
 
-func (s *Syncer) run(ctx context.Context, retriedTimezone bool) (*Result, error) {
+// retries records which restarts a sync has already made.
+type retries struct{ timezone, format bool }
+
+// newestFormat picks the newest upload format in versions that this program
+// produces; dashboards that don't say accept format 1.
+func newestFormat(versions []int) int {
+	best := payload.SchemaV1
+	for _, v := range versions {
+		if v > best && v <= payload.SchemaVersion {
+			best = v
+		}
+	}
+	return best
+}
+
+// uploadFormat returns the format to upload in, asking the dashboard the
+// first time.
+func (s *Syncer) uploadFormat(ctx context.Context) int {
+	if f := s.State.UploadFormat; f >= payload.SchemaV1 && f <= payload.SchemaVersion {
+		return f
+	}
+	info, err := s.Uploader.HealthInfo(ctx)
+	if err != nil {
+		// Every dashboard accepts format 1; its answer to the upload says
+		// whether it accepts more.
+		return payload.SchemaV1
+	}
+	s.State.UploadFormat = newestFormat(info.SchemaVersions)
+	return s.State.UploadFormat
+}
+
+func (s *Syncer) run(ctx context.Context, retried retries) (*Result, error) {
 	tz := s.Config.Timezone
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		return nil, fmt.Errorf("invalid time zone %q: %w", tz, err)
 	}
 	today := s.Now().In(loc).Format(time.DateOnly)
-	full := s.Full || s.State.BackfillTimezone != tz
+	format := s.uploadFormat(ctx)
+	full := s.Full || s.State.BackfillTimezone != tz || s.State.BackfillFormat != format
 
-	opts := ccusage.Options{Timezone: tz}
+	opts := ccusage.Options{Timezone: tz, AllTools: format >= payload.SchemaV2}
 	from := addDays(today, -(RecentDays - 1))
 	if !full {
 		opts.Since = from
@@ -139,15 +188,20 @@ func (s *Syncer) run(ctx context.Context, retriedTimezone bool) (*Result, error)
 		to = l // the machine's clock runs ahead of the dashboard's zone; keep its data
 	}
 
-	res := &Result{Full: full, From: from, To: to, NoClaudeData: report.NoClaudeData}
+	res := &Result{Full: full, From: from, To: to, Format: format, Warning: report.Warning}
+	dates := map[string]bool{}
 	for _, d := range report.Days {
-		if d.Date >= from && d.Date <= to {
-			res.DaysWithUsage++
+		if d.Date >= from && d.Date <= to && (format >= payload.SchemaV2 || d.Source == payload.SourceClaude) {
+			dates[d.Date] = true
+			if !slices.Contains(res.Tools, d.Source) {
+				res.Tools = append(res.Tools, d.Source)
+			}
 		}
 	}
+	res.DaysWithUsage = len(dates)
 
 	for _, chunk := range chunks(from, to, payload.MaxRangeDays) {
-		payloads, err := s.build(report, chunk[0], chunk[1])
+		payloads, err := s.build(report, chunk[0], chunk[1], format)
 		if err != nil {
 			return res, err
 		}
@@ -156,7 +210,7 @@ func (s *Syncer) run(ctx context.Context, retriedTimezone bool) (*Result, error)
 			var apiErr *client.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == http.StatusConflict && apiErr.Code == "timezone_mismatch" {
 				newTz := apiErr.Field("timezone")
-				if retriedTimezone || newTz == "" || newTz == tz {
+				if retried.timezone || newTz == "" || newTz == tz {
 					return res, fmt.Errorf("the dashboard keeps rejecting time zone %q", tz)
 				}
 				// The dashboard's days use another zone now: adopt it and
@@ -168,7 +222,13 @@ func (s *Syncer) run(ctx context.Context, retriedTimezone bool) (*Result, error)
 					}
 				}
 				s.State.BackfillTimezone = ""
-				return s.run(ctx, true)
+				retried.timezone = true
+				return s.run(ctx, retried)
+			}
+			if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest && format > payload.SchemaV1 {
+				// Perhaps the dashboard went back to an older version: ask
+				// it again next time.
+				s.State.UploadFormat = 0
 			}
 			if err != nil {
 				return res, err
@@ -178,19 +238,31 @@ func (s *Syncer) run(ctx context.Context, retriedTimezone bool) (*Result, error)
 			if out.LatestVersion != nil {
 				res.LatestVersion = *out.LatestVersion
 			}
+			if newest := newestFormat(out.SchemaVersions); newest != format {
+				s.State.UploadFormat = newest
+				if newest > format && !retried.format {
+					// The dashboard was updated and now accepts every tool:
+					// upload the whole history again in the new format.
+					retried.format = true
+					return s.run(ctx, retried)
+				}
+			}
 		}
 	}
-	if full {
+	// A history that fell back to Claude Code alone isn't complete; the next
+	// sync tries again.
+	if full && report.Warning == "" {
 		s.State.BackfillTimezone = tz
+		s.State.BackfillFormat = format
 	}
 	return res, nil
 }
 
 // build makes the payload(s) for one date range, halving the range until
 // each payload is small enough to upload.
-func (s *Syncer) build(report *ccusage.Report, from, to string) ([]*payload.Payload, error) {
+func (s *Syncer) build(report *ccusage.Report, from, to string, format int) ([]*payload.Payload, error) {
 	p := &payload.Payload{
-		SchemaVersion: payload.SchemaVersion,
+		SchemaVersion: format,
 		Agent: payload.Agent{
 			Version:             version.Version,
 			OS:                  runtime.GOOS,
@@ -202,11 +274,16 @@ func (s *Syncer) build(report *ccusage.Report, from, to string) ([]*payload.Payl
 		Range:    payload.Range{From: from, To: to},
 		Days:     []payload.Day{},
 	}
+	limit := payload.MaxDaysPerUpload
+	if format >= payload.SchemaV2 {
+		p.Sources = report.Sources
+		limit = payload.MaxEntriesPerUpload
+	}
 	for _, d := range report.Days {
-		if d.Date < from || d.Date > to {
+		if d.Date < from || d.Date > to || (format < payload.SchemaV2 && d.Source != payload.SourceClaude) {
 			continue
 		}
-		day := payload.Day{Date: d.Date, Source: payload.SourceClaude, Models: []payload.Model{}}
+		day := payload.Day{Date: d.Date, Source: d.Source, Models: []payload.Model{}}
 		for _, m := range d.Models {
 			if len(day.Models) == payload.MaxModelsPerDay {
 				break // more models in one day than the dashboard accepts; keep the first 50
@@ -222,25 +299,29 @@ func (s *Syncer) build(report *ccusage.Report, from, to string) ([]*payload.Payl
 		}
 		p.Days = append(p.Days, day)
 	}
-	if err := p.Validate(); err != nil {
-		return nil, fmt.Errorf("internal error building the upload: %w", err)
-	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) <= maxPayloadBytes || from == to {
-		if len(data) > maxPayloadBytes {
+	if len(p.Days) <= limit {
+		if err := p.Validate(); err != nil {
+			return nil, fmt.Errorf("internal error building the upload: %w", err)
+		}
+		data, err := json.Marshal(p)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) <= maxPayloadBytes {
+			return []*payload.Payload{p}, nil
+		}
+		if from == to {
 			return nil, fmt.Errorf("usage for %s is too large to upload (%d bytes)", from, len(data))
 		}
-		return []*payload.Payload{p}, nil
+	} else if from == to {
+		return nil, fmt.Errorf("usage for %s is too large to upload (%d entries)", from, len(p.Days))
 	}
 	mid := addDays(from, daysBetween(from, to)/2-1)
-	left, err := s.build(report, from, mid)
+	left, err := s.build(report, from, mid, format)
 	if err != nil {
 		return nil, err
 	}
-	right, err := s.build(report, addDays(mid, 1), to)
+	right, err := s.build(report, addDays(mid, 1), to, format)
 	if err != nil {
 		return nil, err
 	}

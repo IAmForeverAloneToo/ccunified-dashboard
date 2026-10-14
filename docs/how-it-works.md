@@ -6,7 +6,7 @@
 │ background sync (15/30/60 min)   │  HTTPS  │ Worker "ccunified"                  │
 │  └─ ccunified sync               │ ──────▶ │  ├─ /agent/*  machines (upload key) │
 │      └─ bundled ccusage          │  daily  │  ├─ /api/*    people (login)        │
-│          └─ Claude Code's logs   │  totals │  └─ /         the dashboard pages   │
+│          └─ coding tools' logs   │  totals │  └─ /         the dashboard pages   │
 └──────────────────────────────────┘         │ D1 database "ccunified"             │
                                              └─────────────────────────────────────┘
                                                 ▲ https://usage.example.com
@@ -19,7 +19,7 @@
 | Part | Built with | Role |
 |---|---|---|
 | **`ccunified`**, the program on each machine | Go | Setup wizard, syncing, status, updates, and the `server` commands. One self-contained program per system |
-| **ccusage** | Rust (MIT, by the ccusage authors) | Reads Claude Code's logs and totals tokens and estimated cost per day and model. Shipped inside every release at a pinned version |
+| **ccusage** | Rust (MIT, by the ccusage authors) | Reads the logs of Claude Code and the other coding tools it supports, and totals tokens and estimated cost per day, tool and model. Shipped inside every release at a pinned version |
 | **The Worker** | TypeScript, Hono, Zod | Runs on Cloudflare: takes uploads, handles logins and serves the dashboard |
 | **The dashboard** | TypeScript, Vite, hand-drawn SVG charts | The web pages. Bundled into the Worker, so the dashboard is a single upload |
 | **D1** | Cloudflare's SQLite database | Stores usage, machines, users, sessions and settings |
@@ -36,7 +36,8 @@ Wrangler, the first one included.
   installed everywhere; Bun-compiled programs were 70–96 MB; Python isn't on
   Windows by default; PowerShell is Windows-only.
 - **ccusage v20** is a native program (about 5 MB) that doesn't need Node.js,
-  and it's what people already use to read Claude Code's logs.
+  it's what people already use to read Claude Code's logs, and it reads 17
+  other coding tools' logs too.
 - **A Cloudflare Worker with D1** costs nothing at this scale, needs no server
   to maintain, and gives each user a dashboard on their own account.
 - **The upload format** is one JSON Schema in [`schema/`](../schema/), with
@@ -86,32 +87,57 @@ The background sync runs `ccunified sync --quiet` on schedule:
 2. Runs the bundled ccusage after checking its SHA-256:
 
    ```
-   ccusage claude daily --json --timezone <dashboard time zone> [--since <date>]
+   ccusage daily --json --by-agent --timezone <dashboard time zone> [--since <date>]
    ```
 
-   If ccusage can't download current prices, it's run again with its built-in
-   prices (`--offline`).
-3. **Chooses what to send.** The first sync, and the first after the
-   dashboard's time zone changes, sends the whole history still on disk.
-   Later syncs send the last 7 days, which also fills in anything missed while
-   the machine was off.
+   This reports every tool ccusage finds on the machine. If ccusage can't
+   download current prices, it's run again with its built-in prices
+   (`--offline`). If it can't read the tools at all, the sync falls back to
+   Claude Code alone (`ccusage claude daily …`), says so in `ccunified
+   status`, and tries every tool again on the next sync.
+3. **Chooses what to send.** The first sync, the first after the dashboard's
+   time zone changes, and the first in a newer upload format (see below)
+   send the whole history still on disk. Later syncs send the last 7 days,
+   which also fills in anything missed while the machine was off.
 4. **Uploads** to `POST /agent/ingest` in pieces of at most 100 days (and well
    under the 256 KiB limit), authenticated with the machine's upload key.
-5. **The Worker replaces** that machine's rows for the uploaded days in one
-   transaction. Rows that didn't change aren't rewritten, so sending the same
-   day again never counts it twice and costs almost no database writes.
-6. **The reply** carries the dashboard's time zone and the newest released
-   version. The dashboard asks GitHub for that every 6 hours, and learns it
-   sooner when a machine uploads with a newer release than it knows of. If the machine used an outdated time zone, the Worker refuses the
-   upload (`409 timezone_mismatch`); the machine switches to the new zone and
-   uploads its whole history again.
+5. **The Worker replaces** that machine's rows for the uploaded days, for the
+   tools the upload covers, in one transaction. Rows that didn't change
+   aren't rewritten, so sending the same day again never counts it twice and
+   costs almost no database writes.
+6. **The reply** carries the dashboard's time zone, the upload formats it
+   accepts and the newest released version. The dashboard asks GitHub for
+   that every 6 hours, and learns it sooner when a machine uploads with a
+   newer release than it knows of. If the machine used an outdated time zone,
+   the Worker refuses the upload (`409 timezone_mismatch`); the machine
+   switches to the new zone and uploads its whole history again.
 7. Failed uploads are retried up to 6 times, waiting 1, 2, 4, 8 and 16 seconds
    (or as long as the dashboard asks). The result goes to `state.json`, shown
    by `ccunified status`, and a line to `ccunified.log`.
 
-Claude Code deletes old session logs (after 30 days by default). The dashboard
-keeps every day it has received, so from the day a machine joins its history
-is kept for good.
+Claude Code deletes old session logs (after 30 days by default), and other
+tools may too. The dashboard keeps every day it has received, so from the day
+a machine joins its history is kept for good.
+
+### Upload formats
+
+The upload format is defined once, in
+[`schema/ingest.schema.json`](../schema/ingest.schema.json):
+
+- **Format 2** (ccunified 0.2 and later) carries every tool ccusage reads.
+  Each upload lists the tools it covers (`sources`: every tool the pinned
+  ccusage looks for, whether or not it found any usage), and each day's
+  entry names its tool by ccusage's id (`claude`, `codex`, `gemini`,
+  `copilot`, `opencode`, …).
+- **Format 1** (ccunified 0.1) carries Claude Code only. Dashboards still
+  accept it, so machines can be updated in any order.
+
+A machine asks `GET /healthz` which formats the dashboard accepts the first
+time it syncs, and every upload's reply says so again. A dashboard from
+ccunified 0.1 accepts format 1 only, so the machine uploads Claude Code's
+usage and `ccunified status` suggests `ccunified server update`. As soon as a
+reply says the dashboard accepts format 2, the machine uploads its whole
+history again, with every tool, in the same sync.
 
 ### The background schedule
 
@@ -141,33 +167,33 @@ is kept for good.
 | `GET /api/login-params`, `POST /api/login`, `POST /api/logout` | Log in (with the salt the browser needs to derive the login key) and out | anyone |
 | `GET /api/me`, `POST /api/me/password` | Who's logged in; change your password | any user |
 | `POST /api/me/2fa/setup`, `…/enable`, `…/disable`, `…/recovery-codes` | Two-factor login | any user |
-| `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine and by model | viewer |
+| `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine, by model and by tool, and each machine's usage per tool | viewer |
 | `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker) | viewer |
-| `GET /api/machines` | Machines and their status | viewer |
+| `GET /api/machines` | Machines, their status and the tools each has reported | viewer |
 | `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
 | `GET /api/pairing`, `POST /api/pairing/approve`, `POST /api/pairing/deny` | Machines waiting to join | admin |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users | admin |
 | `GET /api/settings` / `PATCH /api/settings` | Read / change the time zone | viewer / admin |
 
-`GET /healthz` answers `{"ok":true,"version":"…"}` without a login. Every other
-path serves the dashboard's pages.
+`GET /healthz` answers `{"ok":true,"version":"…","schema_versions":[1,2]}`
+without a login. Every other path serves the dashboard's pages.
 
 ## The database
 
 | Table | Holds |
 |---|---|
-| `settings` | Time zone, a random install ID (part of the password salt), the latest known release |
+| `settings` | Time zone, a random install ID (part of the password salt), the latest known release, and every tool seen so far in the order it first appeared (the order of the tools' chart colors) |
 | `users` | Username, role (admin or viewer), password hash, two-factor secret, whether a new password is required, status |
 | `recovery_codes` | Two-factor recovery codes, as hashes |
 | `sessions` | Login sessions, as hashes of their tokens |
 | `login_attempts` | Failed-login counters for rate limiting |
-| `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time |
+| `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time, the tools it has reported |
 | `pairing_requests` | Machines waiting to join, and the outcome of each request |
-| `usage_daily` | One row per machine, source, day and model: four token counts and the estimated cost |
+| `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost |
 
 All tables are SQLite `STRICT` tables, created by the migrations in
-[`worker/migrations/`](../worker/migrations/). The `source` column is `claude`
-for now, leaving room for other coding tools without changing the tables.
+[`worker/migrations/`](../worker/migrations/); `ccunified server update`
+applies new ones before uploading the new Worker.
 Nothing about a particular install lives in the Worker's code, so every
 dashboard runs the same Worker.
 
@@ -187,8 +213,6 @@ Everything fits Cloudflare's free plan:
 Ideas for later versions:
 
 - **macOS**, with a launchd schedule.
-- **Other AI coding tools** (Codex, Gemini CLI and others), using the `source`
-  column.
 - **An account-wide 5-hour usage window**, combining ccusage's block data from
   every machine. Claude Code's own `/usage` would stay the authoritative number.
 - **Syncing right after each Claude Code session**, using a Claude Code hook.

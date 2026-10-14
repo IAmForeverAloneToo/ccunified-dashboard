@@ -34,7 +34,7 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	if string(cf.uploaded) != "export default {}" || cf.uploadedDB != "old-db" || !cf.workersDevOff {
 		t.Fatalf("upload: %q to %s", cf.uploaded, cf.uploadedDB)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0001_init.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	// Running it again finds nothing to migrate.
@@ -42,6 +42,43 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t))
 	if !strings.Contains(out.String(), "already up to date") {
 		t.Fatalf("second run:\n%s", out)
+	}
+}
+
+// A dashboard from ccunified 0.1 (only the first migration) gets the
+// migration for other tools, and its earlier usage is marked as Claude Code's.
+func TestServerUpdateFromTheFirstRelease(t *testing.T) {
+	cf, factory := existingInstall(t)
+	ctx := context.Background()
+	migrations, _ := testAssets(t).Migrations()
+	if _, err := server.ApplyMigrations(ctx, cf.db, migrations[:1]); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO machines (id, name, os, arch, agent_version, sync_interval_minutes, token_hash, created_at)
+		 VALUES ('m1', 'Office PC', 'windows', 'amd64', '0.1.2', 30, 'h1', 1), ('m2', 'New PC', 'linux', 'amd64', '0.1.2', 30, 'h2', 2)`,
+		`INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens,
+		   cache_creation_tokens, cache_read_tokens, cost_usd, updated_at)
+		 VALUES ('m1', 'claude', '2026-10-01', 'claude-opus-5-5', 1, 2, 3, 4, 0.5, 1)`,
+	} {
+		if _, err := cf.db.Query(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := &bytes.Buffer{}
+	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql)") {
+		t.Fatalf("output:\n%s", out)
+	}
+	rows, err := cf.db.Query(ctx, "SELECT id, tools FROM machines ORDER BY id")
+	if err != nil || len(rows) != 2 || rows[0]["tools"] != `["claude"]` || rows[1]["tools"] != "[]" {
+		t.Fatalf("machines: %v %v", rows, err)
+	}
+	rows, err = cf.db.Query(ctx, "SELECT value FROM settings WHERE key = 'tools'")
+	if err != nil || len(rows) != 1 || rows[0]["value"] != `["claude"]` {
+		t.Fatalf("settings: %v %v", rows, err)
 	}
 }
 

@@ -152,6 +152,59 @@ describe("summary", () => {
     expect(again.status).toBe(304);
   });
 
+  test("splits usage by tool, overall and per machine", async () => {
+    const a = await w.createMachine({ name: "tools-a" });
+    const b = await w.createMachine({ name: "tools-b" });
+    const range = { from: "2026-08-01", to: "2026-08-02" };
+    const up = (token: string, days: unknown[]) =>
+      w.fetch(
+        "/agent/ingest",
+        jsonInit(
+          "POST",
+          payload({ schema_version: 2, sources: ["claude", "codex"], range, days }),
+          {
+            headers: { authorization: `Bearer ${token}` },
+          },
+        ),
+      );
+    await up(a.token, [
+      { date: "2026-08-01", source: "claude", models: [model("opus", 10, 1)] },
+      { date: "2026-08-01", source: "codex", models: [model("gpt-5.5", 3, 0.3)] },
+      { date: "2026-08-02", source: "codex", models: [model("gpt-5.5", 2, 0.2)] },
+    ]);
+    await up(b.token, [
+      { date: "2026-08-02", source: "codex", models: [model("gpt-5.5", 1, 0.1)] },
+    ]);
+
+    const res = await w.fetch("/api/summary?from=2026-08-01&to=2026-08-02", {
+      cookie: viewer.cookie,
+    });
+    const body = (await res.json()) as {
+      tools: string[];
+      by_day_source: { day: string; source: string; input_tokens: number }[];
+      by_machine_source: { machine_id: string; source: string; input_tokens: number }[];
+      by_day_model: { day: string; model: string; input_tokens: number }[];
+    };
+    expect(body.tools).toEqual(["claude", "codex"]);
+    expect(
+      Object.fromEntries(body.by_day_source.map((r) => [`${r.day} ${r.source}`, r.input_tokens])),
+    ).toEqual({ "2026-08-01 claude": 10, "2026-08-01 codex": 3, "2026-08-02 codex": 3 });
+    expect(
+      Object.fromEntries(
+        body.by_machine_source.map((r) => [`${r.machine_id} ${r.source}`, r.input_tokens]),
+      ),
+    ).toEqual({ [`${a.id} claude`]: 10, [`${a.id} codex`]: 5, [`${b.id} codex`]: 1 });
+    // A model used by several tools is one model.
+    expect(body.by_day_model.find((r) => r.day === "2026-08-02")?.input_tokens).toBe(3);
+
+    const machines = (await (await w.fetch("/api/machines", { cookie: viewer.cookie })).json()) as {
+      machines: { id: string; tools: string[] }[];
+    };
+    const tools = Object.fromEntries(machines.machines.map((m) => [m.id, m.tools]));
+    expect(tools[a.id]).toEqual(["claude", "codex"]);
+    expect(tools[b.id]).toEqual(["codex"]);
+  });
+
   test("defaults to the last 30 days in the dashboard's time zone", async () => {
     const res = await w.fetch("/api/summary", { cookie: viewer.cookie });
     const body = (await res.json()) as {

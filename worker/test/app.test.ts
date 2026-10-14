@@ -11,7 +11,7 @@ afterAll(() => w.dispose());
 test("health endpoint reports the build version", async () => {
   const res = await w.fetch("/healthz");
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ ok: true, version: "test" });
+  expect(await res.json()).toEqual({ ok: true, version: "test", schema_versions: [1, 2] });
 });
 
 test("every response carries the security headers", async () => {

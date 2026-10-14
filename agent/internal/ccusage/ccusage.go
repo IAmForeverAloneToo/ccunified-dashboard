@@ -126,17 +126,26 @@ type ModelUsage struct {
 	CostUSD             float64
 }
 
-// Day is one calendar day (in the requested time zone).
+// Day is one tool's usage on one calendar day (in the requested time zone).
 type Day struct {
-	Date   string
+	Date string
+	// Source is the tool, such as "claude" or "codex" (see Tools).
+	Source string
 	Models []ModelUsage
 }
 
-// Report is ccusage's daily report, sorted by date.
+// Report is ccusage's daily report, sorted by date, then tool.
 type Report struct {
 	Days []Day
-	// NoClaudeData is set when this machine has no Claude Code logs at all.
+	// Sources are the tools the report covers: every tool ccusage looked
+	// for, whether or not it found any usage.
+	Sources []string
+	// NoClaudeData is set when a Claude Code-only report found no Claude
+	// Code logs at all.
 	NoClaudeData bool
+	// Warning says why a report covers only Claude Code although every tool
+	// was asked for.
+	Warning string
 }
 
 // Earliest returns the first date with usage, or "" if there is none.
@@ -155,23 +164,39 @@ func (r *Report) Latest() string {
 	return r.Days[len(r.Days)-1].Date
 }
 
-type rawReport struct {
+type rawModel struct {
+	ModelName           string  `json:"modelName"`
+	InputTokens         int64   `json:"inputTokens"`
+	OutputTokens        int64   `json:"outputTokens"`
+	CacheCreationTokens int64   `json:"cacheCreationTokens"`
+	CacheReadTokens     int64   `json:"cacheReadTokens"`
+	Cost                float64 `json:"cost"`
+}
+
+// rawClaude is `ccusage claude daily --json`.
+type rawClaude struct {
 	Daily []struct {
-		Date            string `json:"date"`
-		ModelBreakdowns []struct {
-			ModelName           string  `json:"modelName"`
-			InputTokens         int64   `json:"inputTokens"`
-			OutputTokens        int64   `json:"outputTokens"`
-			CacheCreationTokens int64   `json:"cacheCreationTokens"`
-			CacheReadTokens     int64   `json:"cacheReadTokens"`
-			Cost                float64 `json:"cost"`
-		} `json:"modelBreakdowns"`
+		Date            string     `json:"date"`
+		ModelBreakdowns []rawModel `json:"modelBreakdowns"`
+	} `json:"daily"`
+}
+
+// rawAll is `ccusage daily --json --by-agent`: every tool, one row per day.
+type rawAll struct {
+	Daily []struct {
+		Period string `json:"period"`
+		Agents []struct {
+			Agent           string     `json:"agent"`
+			ModelBreakdowns []rawModel `json:"modelBreakdowns"`
+		} `json:"agents"`
 	} `json:"daily"`
 }
 
 var (
-	dateRe     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	badModelRe = regexp.MustCompile(`[^\x21-\x7e]`)
+	dateRe      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	badModelRe  = regexp.MustCompile(`[^\x21-\x7e]`)
+	sourceRe    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	badSourceRe = regexp.MustCompile(`[^a-z0-9_-]`)
 )
 
 // SanitizeModel turns a model name into the upload format's allowed
@@ -187,63 +212,123 @@ func SanitizeModel(name string) string {
 	return name
 }
 
-// Parse reads ccusage's `claude daily --json` output. Models with no tokens
-// at all (such as Claude Code's internal "<synthetic>" entries) are dropped,
-// and entries that sanitize to the same name are merged.
-func Parse(data []byte) (*Report, error) {
-	var raw rawReport
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("unexpected ccusage output: %w", err)
+// SanitizeSource turns a tool name into the upload format's tool ids
+// (lowercase letters, digits, '-' and '_', starting with a letter, at most 32).
+func SanitizeSource(name string) string {
+	name = badSourceRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
+	if !sourceRe.MatchString(name) {
+		name = "t" + name
 	}
-	byDate := map[string]map[string]*ModelUsage{}
-	for _, d := range raw.Daily {
-		if !dateRe.MatchString(d.Date) {
-			return nil, fmt.Errorf("unexpected date %q in ccusage output", d.Date)
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	return name
+}
+
+// collector merges ccusage's rows into a Report.
+type collector map[[2]string]map[string]*ModelUsage // (date, source) -> model -> usage
+
+func (c collector) add(date, source string, models []rawModel) error {
+	if !dateRe.MatchString(date) {
+		return fmt.Errorf("unexpected date %q in ccusage output", date)
+	}
+	if _, err := time.Parse(time.DateOnly, date); err != nil {
+		return fmt.Errorf("unexpected date %q in ccusage output", date)
+	}
+	key := [2]string{date, source}
+	day := c[key]
+	if day == nil {
+		day = map[string]*ModelUsage{}
+		c[key] = day
+	}
+	for _, m := range models {
+		if m.InputTokens < 0 || m.OutputTokens < 0 || m.CacheCreationTokens < 0 || m.CacheReadTokens < 0 {
+			return fmt.Errorf("negative token count for %s on %s", m.ModelName, date)
 		}
-		if _, err := time.Parse(time.DateOnly, d.Date); err != nil {
-			return nil, fmt.Errorf("unexpected date %q in ccusage output", d.Date)
+		if m.InputTokens+m.OutputTokens+m.CacheCreationTokens+m.CacheReadTokens == 0 {
+			continue
 		}
-		models := byDate[d.Date]
-		if models == nil {
-			models = map[string]*ModelUsage{}
-			byDate[d.Date] = models
+		name := SanitizeModel(m.ModelName)
+		u := day[name]
+		if u == nil {
+			u = &ModelUsage{Model: name}
+			day[name] = u
 		}
-		for _, m := range d.ModelBreakdowns {
-			if m.InputTokens < 0 || m.OutputTokens < 0 || m.CacheCreationTokens < 0 || m.CacheReadTokens < 0 {
-				return nil, fmt.Errorf("negative token count for %s on %s", m.ModelName, d.Date)
-			}
-			if m.InputTokens+m.OutputTokens+m.CacheCreationTokens+m.CacheReadTokens == 0 {
-				continue
-			}
-			name := SanitizeModel(m.ModelName)
-			u := models[name]
-			if u == nil {
-				u = &ModelUsage{Model: name}
-				models[name] = u
-			}
-			u.InputTokens += m.InputTokens
-			u.OutputTokens += m.OutputTokens
-			u.CacheCreationTokens += m.CacheCreationTokens
-			u.CacheReadTokens += m.CacheReadTokens
-			if m.Cost > 0 {
-				u.CostUSD += m.Cost
-			}
+		u.InputTokens += m.InputTokens
+		u.OutputTokens += m.OutputTokens
+		u.CacheCreationTokens += m.CacheCreationTokens
+		u.CacheReadTokens += m.CacheReadTokens
+		if m.Cost > 0 {
+			u.CostUSD += m.Cost
 		}
 	}
-	report := &Report{}
-	for date, models := range byDate {
+	return nil
+}
+
+func (c collector) report(sources []string) *Report {
+	report := &Report{Sources: sources}
+	for key, models := range c {
 		if len(models) == 0 {
 			continue
 		}
-		day := Day{Date: date}
+		day := Day{Date: key[0], Source: key[1]}
 		for _, u := range models {
 			day.Models = append(day.Models, *u)
 		}
 		sort.Slice(day.Models, func(i, j int) bool { return day.Models[i].Model < day.Models[j].Model })
 		report.Days = append(report.Days, day)
 	}
-	sort.Slice(report.Days, func(i, j int) bool { return report.Days[i].Date < report.Days[j].Date })
-	return report, nil
+	sort.Slice(report.Days, func(i, j int) bool {
+		a, b := report.Days[i], report.Days[j]
+		return a.Date < b.Date || (a.Date == b.Date && a.Source < b.Source)
+	})
+	return report
+}
+
+// Parse reads ccusage's `claude daily --json` output (Claude Code only).
+// Models with no tokens at all (such as Claude Code's internal "<synthetic>"
+// entries) are dropped, and entries that sanitize to the same name are merged.
+func Parse(data []byte) (*Report, error) {
+	var raw rawClaude
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("unexpected ccusage output: %w", err)
+	}
+	c := collector{}
+	for _, d := range raw.Daily {
+		if err := c.add(d.Date, "claude", d.ModelBreakdowns); err != nil {
+			return nil, err
+		}
+	}
+	return c.report([]string{"claude"}), nil
+}
+
+// ParseAll reads ccusage's `daily --json --by-agent` output, which covers
+// every tool in Tools. Models are cleaned up as in Parse.
+func ParseAll(data []byte) (*Report, error) {
+	var raw rawAll
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("unexpected ccusage output: %w", err)
+	}
+	c := collector{}
+	sources := make([]string, 0, len(Tools))
+	seen := map[string]bool{}
+	for _, t := range Tools {
+		sources = append(sources, t.ID)
+		seen[t.ID] = true
+	}
+	for _, d := range raw.Daily {
+		for _, a := range d.Agents {
+			source := SanitizeSource(a.Agent)
+			if !seen[source] {
+				sources = append(sources, source)
+				seen[source] = true
+			}
+			if err := c.add(d.Period, source, a.ModelBreakdowns); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return c.report(sources), nil
 }
 
 // Options select what the daily report covers.
@@ -254,14 +339,30 @@ type Options struct {
 	Since string
 	// Offline uses ccusage's built-in price list instead of fetching the latest prices.
 	Offline bool
+	// AllTools reads every tool in Tools; otherwise only Claude Code.
+	AllTools bool
 }
 
 const runTimeout = 5 * time.Minute
 
-// Daily runs `ccusage claude daily --json` and parses the result. If
-// fetching current prices fails, it retries once with the built-in prices.
+// Daily runs ccusage's daily report and parses the result. If fetching
+// current prices fails, it retries once with the built-in prices. If reading
+// every tool fails, it falls back to Claude Code alone and says why in the
+// report's Warning.
 func (r *Runner) Daily(ctx context.Context, opts Options) (*Report, error) {
 	opts.Offline = opts.Offline || r.Offline
+	report, err := r.dailyWithFallbackPrices(ctx, opts)
+	if err != nil && opts.AllTools && !errors.Is(err, ErrChecksum) && ctx.Err() == nil {
+		opts.AllTools = false
+		if claude, err2 := r.dailyWithFallbackPrices(ctx, opts); err2 == nil {
+			claude.Warning = "only Claude Code's usage could be read: " + err.Error()
+			return claude, nil
+		}
+	}
+	return report, err
+}
+
+func (r *Runner) dailyWithFallbackPrices(ctx context.Context, opts Options) (*Report, error) {
 	report, err := r.daily(ctx, opts)
 	if err != nil && !opts.Offline && !errors.Is(err, ErrChecksum) && ctx.Err() == nil {
 		opts.Offline = true
@@ -278,7 +379,11 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 			return nil, err
 		}
 	}
-	args := []string{"claude", "daily", "--json", "--timezone", opts.Timezone}
+	args := []string{"claude", "daily", "--json"}
+	if opts.AllTools {
+		args = []string{"daily", "--json", "--by-agent"}
+	}
+	args = append(args, "--timezone", opts.Timezone)
 	if opts.Since != "" {
 		args = append(args, "--since", strings.ReplaceAll(opts.Since, "-", ""))
 	}
@@ -299,8 +404,8 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
-		if strings.Contains(msg, "No valid Claude data directories found") {
-			return &Report{NoClaudeData: true}, nil
+		if !opts.AllTools && strings.Contains(msg, "No valid Claude data directories found") {
+			return &Report{Sources: []string{"claude"}, NoClaudeData: true}, nil
 		}
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())
@@ -309,6 +414,9 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 			msg = msg[:500] + "…"
 		}
 		return nil, fmt.Errorf("ccusage failed: %w: %s", err, msg)
+	}
+	if opts.AllTools {
+		return ParseAll(stdout.Bytes())
 	}
 	return Parse(stdout.Bytes())
 }

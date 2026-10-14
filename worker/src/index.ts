@@ -21,6 +21,7 @@ import {
 } from "./auth/routes";
 import { requireUser } from "./auth/session";
 import type { AppEnv } from "./env";
+import { INGEST_SCHEMA_VERSIONS } from "./ingest/schema";
 import { sameOriginOnly, securityHeaders } from "./lib/security";
 import { SERVER_VERSION } from "./version";
 
@@ -28,7 +29,9 @@ const app = new Hono<AppEnv>();
 
 app.use("*", securityHeaders);
 
-app.get("/healthz", (c) => c.json({ ok: true, version: SERVER_VERSION }));
+app.get("/healthz", (c) =>
+  c.json({ ok: true, version: SERVER_VERSION, schema_versions: INGEST_SCHEMA_VERSIONS }),
+);
 
 // Machines: pairing (no key yet) and uploads (upload key).
 app.post("/agent/pair/start", startPairing);

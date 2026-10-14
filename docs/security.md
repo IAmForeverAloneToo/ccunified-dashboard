@@ -13,11 +13,11 @@ ccunified or anyone else.
 | When | What |
 |---|---|
 | Joining | The machine's name, operating system, processor type, ccunified version and upload interval |
-| Every upload | The same versions and settings, the ccusage version, the dashboard's time zone, the date range, and for each day and model: the model name, the four token counts (input, output, cache writes, cache reads) and the estimated cost |
+| Every upload | The same versions and settings, the ccusage version, the dashboard's time zone, the date range, the tools ccusage looked for, and for each day, tool and model: the tool (such as `codex`), the model name, the four token counts (input, output, cache writes, cache reads) and the estimated cost |
 
 Prompts, responses, code, file paths, project names and session details never
-leave the machine. ccusage reads Claude Code's logs locally, and ccunified only
-sends the daily totals it calculates. The upload format is defined in
+leave the machine. ccusage reads the coding tools' logs locally, and ccunified
+only sends the daily totals it calculates. The upload format is defined in
 [`schema/ingest.schema.json`](../schema/ingest.schema.json); the dashboard
 rejects anything that doesn't match it.
 

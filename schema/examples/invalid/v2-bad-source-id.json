@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "agent": {
+    "version": "0.2.0",
+    "os": "linux",
+    "arch": "amd64",
+    "ccusage_version": "20.0.32",
+    "sync_interval_minutes": 15
+  },
+  "timezone": "America/Toronto",
+  "range": {
+    "from": "2026-10-07",
+    "to": "2026-10-13"
+  },
+  "sources": ["claude", "Codex"],
+  "days": [
+    {
+      "date": "2026-10-12",
+      "source": "claude",
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "input_tokens": 18250,
+          "output_tokens": 96412,
+          "cache_creation_tokens": 1203311,
+          "cache_read_tokens": 28877410,
+          "cost_usd": 41.27
+        }
+      ]
+    }
+  ]
+}

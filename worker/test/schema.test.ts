@@ -18,7 +18,7 @@ function generatedJsonSchema(): string {
       $id: "https://github.com/IAmForeverAloneToo/ccunified-dashboard/schema/ingest.schema.json",
       title: "ccunified ingest payload",
       description:
-        "Generated from worker/src/ingest/schema.ts. Uniqueness rules (one entry per source/date, one per model per day) are enforced by the Worker and agent but cannot be expressed here.",
+        "Generated from worker/src/ingest/schema.ts. The Worker and agent also enforce rules JSON Schema cannot express: one entry per source and date, each model once per day, each source listed once, and every day's source listed in sources.",
     },
     null,
     2,

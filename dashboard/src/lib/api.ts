@@ -94,8 +94,13 @@ export interface Summary {
   today: string;
   from: string;
   to: string;
+  /** Every tool the dashboard has seen, in the order they first appeared. */
+  tools: string[];
   by_day_machine: (Totals & { day: string; machine_id: string })[];
   by_day_model: (Totals & { day: string; model: string })[];
+  by_day_source: (Totals & { day: string; source: string })[];
+  /** Each machine's usage per tool over the whole period. */
+  by_machine_source: (Totals & { machine_id: string; source: string })[];
 }
 
 export interface Machine {
@@ -109,6 +114,8 @@ export interface Machine {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  /** The tools this machine has reported usage for. */
+  tools: string[];
   status: "ok" | "late" | "never" | "revoked";
   update_available: boolean;
 }

@@ -1,12 +1,13 @@
 # ccunified
 
-One dashboard for your Claude Code usage across all your machines.
+One dashboard for your AI coding usage across all your machines: Claude Code,
+Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and every other tool
+[ccusage](https://github.com/ccusage/ccusage) reads.
 
-A small program on each computer reads Claude Code's local usage logs (with
-[ccusage](https://github.com/ccusage/ccusage)) and uploads daily totals to a
-dashboard on your own domain, hosted on your own Cloudflare account. Your
-desktop, laptop and servers show up side by side, with tokens and estimated
-cost per machine and per model.
+A small program on each computer reads the tools' local usage logs (with
+ccusage) and uploads daily totals to a dashboard on your own domain, hosted on
+your own Cloudflare account. Your desktop, laptop and servers show up side by
+side, with tokens and estimated cost per machine, per tool and per model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -20,14 +21,17 @@ cost per machine and per model.
 - **All machines in one place.** Windows and Linux (x86-64), each uploading in
   the background on its own schedule (every 15, 30 or 60 minutes). Linux
   servers keep uploading while you're logged out.
-- **Daily tokens and estimated cost** by machine or by model, for today, 7, 30
-  or 90 days, a year, all time, or any dates you pick on a calendar, as a
+- **Every coding tool ccusage reads**, found automatically: Claude Code,
+  Codex, Gemini CLI, GitHub Copilot CLI, OpenCode, Amp, Droid, Goose, Kilo,
+  Qwen, Kimi and more. Nothing to configure.
+- **Daily tokens and estimated cost** by machine, tool or model, for today, 7,
+  30 or 90 days, a year, all time, or any dates you pick on a calendar, as a
   chart or a table.
 - **Yours alone.** The dashboard runs on your Cloudflare account (the free plan
   is enough) at a subdomain you choose, like `usage.example.com`. Nothing goes
   through anyone else's servers.
-- **Only totals leave your machines.** Per day and model: token counts and
-  estimated cost. No prompts, code, file names or project names.
+- **Only totals leave your machines.** Per day, tool and model: token counts
+  and estimated cost. No prompts, code, file names or project names.
 - **Simple to add machines.** A new machine shows a short code; you approve it
   on the dashboard.
 - **Accounts with roles.** Admins and read-only viewers, with optional
@@ -40,8 +44,8 @@ cost per machine and per model.
 
 - A **Cloudflare account** (free) with a **domain** on it. The domain's status
   must be Active, meaning its nameservers point to Cloudflare.
-- **Windows 10 or 11**, or **Linux** on x86-64, with Claude Code installed on
-  the machines you want to track.
+- **Windows 10 or 11**, or **Linux** on x86-64, with Claude Code or another
+  supported coding tool on the machines you want to track.
 
 ## Get started
 
@@ -75,7 +79,7 @@ dashboard up to date in the background.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/machines-dark.png">
-  <img alt="The Machines page: each machine's status, last upload, operating system, program version, sync interval and 30-day token total" src="docs/images/machines-light.png">
+  <img alt="The Machines page: each machine's status, last upload, operating system, coding tools, program version, sync interval and 30-day token total" src="docs/images/machines-light.png">
 </picture>
 
 ## Everyday commands
@@ -113,9 +117,9 @@ Everything fits Cloudflare's free plan with room to spare: ten machines
 syncing every 15 minutes make under 1,000 requests a day (the limit is
 100,000), and a year of their data is a few megabytes of database.
 
-The costs on the dashboard are **estimates at Anthropic's API prices**, as
-calculated by ccusage. With a Claude subscription you aren't billed per token,
-so treat them as a measure of usage, not a bill.
+The costs on the dashboard are **estimates at API prices**, as calculated by
+ccusage. With a subscription (Claude, ChatGPT, Copilot, …) you aren't billed
+per token, so treat them as a measure of usage, not a bill.
 
 ## License
 
