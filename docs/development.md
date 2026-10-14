@@ -1,0 +1,148 @@
+# Development
+
+## Requirements
+
+- **Node.js 24 LTS** (24.15 or later) with **npm 12.2** or later, for the
+  Worker and dashboard. `npm install -g npm@12` if your Node.js came with an
+  older npm.
+- **Go 1.27** or later, for the `ccunified` program.
+- For the full rehearsal: **Linux**, **Google Chrome** (`npx playwright
+  install chrome` installs the current stable version) and `openssl`.
+
+The project always uses the latest versions of its tools, libraries and GitHub
+Actions; when you upgrade one, upgrade it to the newest release.
+
+## Repository layout
+
+```
+agent/        Go: the ccunified program
+  cmd/ccunified/        entry point
+  internal/cli/         commands
+  internal/setup/       the setup wizard and the server commands
+  internal/syncer/      runs ccusage and uploads
+  internal/ccusage/     finds, verifies and runs the bundled ccusage (pinned.json)
+  internal/cloudflare/  Cloudflare REST API client
+  internal/schedule/    Task Scheduler, systemd and cron
+  internal/update/      self-update
+  tools/fetchccusage/   downloads and verifies the pinned ccusage
+  tools/release/        builds release archives
+worker/       TypeScript: the Cloudflare Worker, its D1 migrations and tests
+dashboard/    TypeScript: the dashboard pages (bundled into the Worker)
+schema/       the upload format (JSON Schema), example uploads, login test vectors
+e2e/          the full rehearsal
+scripts/      install.sh, install.ps1, build-assets.mjs
+docs/         documentation
+.github/      CI and release workflows
+```
+
+## Everyday commands
+
+```sh
+npm ci                 # install the JavaScript tooling
+npm run lint           # Biome (formatting and lint)
+npm run format         # fix what Biome can fix
+npm run typecheck      # TypeScript
+npm test               # Worker tests, inside workerd
+npm run build          # build the dashboard and bundle the Worker
+npm run check          # all of the above, plus the Go checks and tests
+npm run demo           # the dashboard with demo data at http://localhost:8787
+npm run rehearsal      # the full rehearsal (Linux)
+```
+
+For the Go program:
+
+```sh
+cd agent
+go run ./tools/fetchccusage   # the pinned ccusage for this platform (once)
+go vet ./... && go test ./...
+```
+
+`npm run check` is what CI runs; run it before pushing.
+
+## Tests
+
+- **Worker:** Vitest tests run the bundled Worker inside workerd, Cloudflare's
+  real runtime, against a real D1 database, through Miniflare. They cover the
+  upload rules, logins, roles, two-factor, pairing and attack cases such as
+  forged requests and brute-forcing.
+- **Upload format:** the Zod schema in `worker/src/ingest/schema.ts` is the
+  source of truth; `schema/ingest.schema.json` is generated from it
+  (`UPDATE_SCHEMA=1 npm test -w worker` rewrites it). The example uploads in
+  `schema/examples/` must be accepted or rejected by both the Worker and the Go
+  program; see [its README](../schema/examples/README.md).
+- **Login keys:** `schema/test-vectors/login-kdf.json` holds password-to-key
+  results that the browser code, the Worker tests and the Go program must all
+  reproduce.
+- **Go:** unit tests for every package, including the setup wizard against a
+  simulated Cloudflare API with an SQLite stand-in for D1, and syncing with the
+  real ccusage against sample Claude Code logs.
+- **Real background schedule:** with `CCUNIFIED_TEST_SCHEDULER=1`,
+  `go test ./internal/schedule/ -run Integration` installs the real Task
+  Scheduler task or systemd timer, waits for it to upload to a local test
+  dashboard, then removes it. CI runs it on Windows and Linux; it changes your
+  real schedule, so it's off by default.
+- **Installers:** CI checks `install.sh` with shellcheck and `install.ps1`
+  with PowerShell 5.1 and 7. The Release workflow installs, runs and
+  uninstalls every build on Windows and Linux.
+
+### The full rehearsal
+
+`npm run rehearsal` (in `e2e/`) runs the whole flow with the real program and a
+real browser:
+
+1. Builds the dashboard into the program and compiles `ccunified`.
+2. Starts a stand-in Cloudflare (`e2e/src/fake-cloudflare.ts`): the REST API
+   the wizard uses, D1 and the uploaded Worker running in workerd, the custom
+   domain served over HTTPS, and public DNS that publishes a new subdomain
+   after a delay, as Cloudflare does.
+3. Machine one runs `ccunified setup` and creates the dashboard, answering the
+   prompts like a person would (including a rejected token and a taken
+   subdomain).
+4. Google Chrome logs in. Machine two joins; Chrome approves its code.
+5. Checks that the dashboard shows exactly what ccusage reports for each
+   machine's logs, in the API and on the page, and that syncing again changes
+   nothing.
+
+It uses **this computer's real Claude Code logs** when there are any, copied
+and split between the two machines file by file; the copies are deleted
+afterwards. Where there are none, as on CI, it generates logs. Screenshots go
+to `e2e/test-results/`.
+
+## Updating the docs' screenshots
+
+The screenshots in `docs/images/` show the demo data. Run `npm run demo`, then
+capture the Overview (30 days, split by machine) and Machines pages at
+1280 px wide in light and dark mode, at 2× scale.
+
+## Upgrading ccusage
+
+1. In `agent/internal/ccusage/pinned.json`, set the new version and each
+   platform's npm `integrity` (from `npm view @ccusage/ccusage-<platform>@<version> dist.integrity`).
+2. `go run ./tools/fetchccusage -all -update` downloads every platform, checks
+   the integrity and fills in the SHA-256 values.
+3. Run the tests and the rehearsal.
+
+## Environment variables
+
+For testing and development only:
+
+| Variable | Effect |
+|---|---|
+| `CCUNIFIED_CCUSAGE` | Run this ccusage instead of the bundled one (still checksum-verified) |
+| `CCUNIFIED_CCUSAGE_UNVERIFIED=1` | Skip the checksum check for `CCUNIFIED_CCUSAGE` |
+| `CCUNIFIED_CCUSAGE_OFFLINE=1` | Always use ccusage's built-in prices |
+| `CCUNIFIED_REQUIRE_CCUSAGE=1` | Go tests fail, instead of skipping, when ccusage is missing (set in CI) |
+| `CCUNIFIED_CLOUDFLARE_API` | Cloudflare API base URL for the wizard and `server` commands |
+| `CCUNIFIED_DOH_URL` | DNS-over-HTTPS endpoint used instead of Cloudflare's public DNS |
+| `CCUNIFIED_TEST_SCHEDULER=1` | Enables the real background-schedule test |
+| `CCUNIFIED_VERSION`, `CCUNIFIED_REPO` | Version and repository built into the Worker by `npm run build:assets` |
+| `CCUNIFIED_DOWNLOAD_BASE`, `CCUNIFIED_REPO` | Installers: download from this address, or from another repository's releases |
+
+User-facing variables are in the [command reference](commands.md#environment-variables).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `Main` and on pull requests:
+the Worker and dashboard checks, the Go tests on Windows and Linux, the real
+background-schedule test on both, the installer checks and the full
+rehearsal. Releases are covered in [Releasing](releasing.md).
