@@ -1,0 +1,35 @@
+{
+  "version": "20.0.31",
+  "platforms": {
+    "darwin/amd64": {
+      "package": "@ccusage/ccusage-darwin-x64",
+      "integrity": "sha512-xLba4XYAnTB8Bz9vjgFjEnltUHtMZSCA/Nc7VEx8wqMXL9trOAYGv+oDxTGdz75/d/gfdYx+gOJk0r0TIRAC1A==",
+      "sha256": "b64995b6eb198c53bbf19142c06d0c9c2c2be931e8db873d53e0aeeed00cebd1"
+    },
+    "darwin/arm64": {
+      "package": "@ccusage/ccusage-darwin-arm64",
+      "integrity": "sha512-YIqwW81W/0XisDVE5A1fWDMZLQEwFHT3kp965XkrUpl7E1B0Q1NQ9Egb/NGnH6CfmmKDePngDw9jYu2JvtHJKQ==",
+      "sha256": "fdec60203b05f3331deae72850d40ea6d948a0ae3e8cfb7e3b0a104a3b0f32bb"
+    },
+    "linux/amd64": {
+      "package": "@ccusage/ccusage-linux-x64",
+      "integrity": "sha512-ZJoySAJsauSSz1viamQ4UGsJxTrmIv08j2mbYA3Rhr0hOjSj7Q4qPvtMFBzWF/A1XEW1o1nUVnWWkW3Sq57OkQ==",
+      "sha256": "6ea7ef69104c257c3b9e85b6f30403512822b36507667d7a8dfb3d2505134697"
+    },
+    "linux/arm64": {
+      "package": "@ccusage/ccusage-linux-arm64",
+      "integrity": "sha512-V1kA7ki7GGybyjvWIE4D2mD17ufR/JG9cL6jr5245NbiuVatbr8guTLLqCkBgmraC/VkUKSPdM8090PVVaSPug==",
+      "sha256": "5e1013d8a12583cb1d1a3faac08b7a5ed80e541b7dff96de1c2a2485e1e75f83"
+    },
+    "windows/amd64": {
+      "package": "@ccusage/ccusage-win32-x64",
+      "integrity": "sha512-d9Hms+QBGkZohMf0n3qKpro4gNCdt7O4vtN+klTtjm72isROaU8l0vlq/Q/QfRae9vI+bvlKIwvwZ2Yfy1WZ/Q==",
+      "sha256": "e6dadc30eece078ddc02249deeeb192ff4133df9330826f26d39117087778845"
+    },
+    "windows/arm64": {
+      "package": "@ccusage/ccusage-win32-arm64",
+      "integrity": "sha512-BFeVbFaaoJem6aWWsfbZ/J4CyJd9hfPaTyxQE4ShaNBGZbq4fcKFzShcoZmxyGVAZgtgEG9ma9kfWIOIyqEnvA==",
+      "sha256": "30f0c73b175f6b199ca2a2b9e5b09825d0a1837cc52d26af68d8161678884f52"
+    }
+  }
+}

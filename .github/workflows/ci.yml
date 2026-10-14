@@ -50,4 +50,8 @@ jobs:
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      - name: Fetch the pinned ccusage (verified against pinned checksums)
+        run: go run ./tools/fetchccusage
       - run: go test ./...
+        env:
+          CCUNIFIED_REQUIRE_CCUSAGE: "1"

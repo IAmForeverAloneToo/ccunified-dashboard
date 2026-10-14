@@ -1,19 +1,16 @@
-// Command ccunified uploads Claude Code usage from this machine to a
-// ccunified dashboard.
+// Command ccunified uploads this machine's Claude Code usage to a ccunified
+// dashboard. Run "ccunified help" for the commands.
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/cli"
+
+	// Time zone data built in, so every IANA zone works on Windows too.
+	_ "time/tzdata"
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		fmt.Println("ccunified", version.Version)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "usage: ccunified version")
-	os.Exit(2)
+	os.Exit(cli.Main(os.Args[1:], &cli.Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}))
 }
