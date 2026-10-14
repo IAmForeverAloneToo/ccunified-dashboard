@@ -68,7 +68,7 @@ func (d *fakeDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func setup(t *testing.T) (*fakeDashboard, *Env, *bytes.Buffer) {
+func setupTest(t *testing.T) (*fakeDashboard, *Env, *bytes.Buffer) {
 	t.Helper()
 	bin, _ := filepath.Abs(filepath.Join("..", "ccusage", "bin", runtime.GOOS+"-"+runtime.GOARCH, ccusage.ExeName()))
 	if _, err := os.Stat(bin); err != nil {
@@ -103,7 +103,7 @@ func setup(t *testing.T) (*fakeDashboard, *Env, *bytes.Buffer) {
 }
 
 func TestSyncUploadsRealUsage(t *testing.T) {
-	dash, env, out := setup(t)
+	dash, env, out := setupTest(t)
 
 	if code := Main([]string{"sync"}, env); code != 0 {
 		t.Fatalf("sync exit %d: %s", code, out)
@@ -163,7 +163,7 @@ func TestSyncUploadsRealUsage(t *testing.T) {
 }
 
 func TestSyncFollowsTheDashboardsTimezone(t *testing.T) {
-	dash, env, out := setup(t)
+	dash, env, out := setupTest(t)
 	dash.timezone = "America/Toronto"
 	if code := Main([]string{"sync"}, env); code != 0 {
 		t.Fatalf("sync exit %d: %s", code, out)
@@ -198,7 +198,7 @@ func TestSyncWithoutSetupExplainsWhatToDo(t *testing.T) {
 }
 
 func TestConfigSetInterval(t *testing.T) {
-	dash, env, out := setup(t)
+	dash, env, out := setupTest(t)
 	if code := Main([]string{"config", "set", "interval", "45"}, env); code != 2 {
 		t.Fatalf("invalid interval accepted: %s", out)
 	}
@@ -212,7 +212,7 @@ func TestConfigSetInterval(t *testing.T) {
 }
 
 func TestOnlyOneSyncAtATime(t *testing.T) {
-	_, env, out := setup(t)
+	_, env, out := setupTest(t)
 	unlock, err := config.Lock()
 	if err != nil {
 		t.Fatal(err)

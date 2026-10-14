@@ -9,7 +9,8 @@ playwright-report/
 
 # generated build inputs
 worker/src/generated/
-agent/internal/embedded/assets/
+agent/internal/serverassets/assets/worker.js
+agent/internal/serverassets/assets/migrations/
 agent/internal/ccusage/bin/
 
 # Go build output

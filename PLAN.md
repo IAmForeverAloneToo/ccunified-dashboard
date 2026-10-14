@@ -169,8 +169,17 @@ release's checksums, installs it into your user account and starts
 
 **Create a new dashboard**
 
-1. **Cloudflare API token.** The wizard shows exactly which permissions to
-   tick and links to the token page. It checks the token before continuing.
+1. **Cloudflare API token.** The wizard links to Cloudflare's token page with
+   these permissions filled in, and checks the token before continuing:
+   - Account > Workers Scripts > Edit
+   - Account > D1 > Edit
+   - Account > Account Settings > Read
+   - Zone > Workers Routes > Edit
+   - Zone > Zone > Read
+   - Zone > DNS > Read
+
+   The last one lets the wizard see whether the chosen subdomain is
+   already taken before it creates anything.
 2. **Domain**, picked from the domains in your Cloudflare account.
 3. **Subdomain**, e.g. `usage`, giving `usage.<your-domain>`.
 4. **Timezone** for the dashboard's days. The default is this machine's
@@ -180,7 +189,8 @@ release's checksums, installs it into your user account and starts
    interval**.
 7. A **summary to confirm**. The wizard then builds everything, starts the
    background sync, runs the first upload and prints the dashboard address.
-   The token is then discarded.
+   The token is then discarded. If any step fails partway, the wizard
+   offers to remove what it created, so you can simply run setup again.
 
 **Join an existing dashboard**
 
