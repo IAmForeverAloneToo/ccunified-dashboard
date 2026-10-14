@@ -13,13 +13,26 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "agent/internal/serverassets/assets");
 const version = process.env.CCUNIFIED_VERSION ?? "dev";
 
-execFileSync("npm", ["run", "build", "-w", "dashboard"], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
-const worker = await bundleWorker({ version, repo: process.env.CCUNIFIED_REPO, requireDashboard: true });
+execFileSync("npm", ["run", "build", "-w", "dashboard"], {
+  cwd: root,
+  stdio: "inherit",
+  shell: process.platform === "win32",
+});
+const worker = await bundleWorker({
+  version,
+  repo: process.env.CCUNIFIED_REPO,
+  requireDashboard: true,
+});
 await writeFile(join(out, "worker.js"), worker);
 
 await rm(join(out, "migrations"), { recursive: true, force: true });
 await mkdir(join(out, "migrations"), { recursive: true });
-const migrations = (await readdir(join(root, "worker/migrations"))).filter((f) => f.endsWith(".sql")).sort();
-for (const f of migrations) await copyFile(join(root, "worker/migrations", f), join(out, "migrations", f));
+const migrations = (await readdir(join(root, "worker/migrations")))
+  .filter((f) => f.endsWith(".sql"))
+  .sort();
+for (const f of migrations)
+  await copyFile(join(root, "worker/migrations", f), join(out, "migrations", f));
 
-console.log(`assets: worker.js (${worker.length} bytes, version ${version}) + ${migrations.length} migration(s) -> ${out}`);
+console.log(
+  `assets: worker.js (${worker.length} bytes, version ${version}) + ${migrations.length} migration(s) -> ${out}`,
+);
