@@ -36,17 +36,18 @@ daily totals are uploaded), otherwise it generates some.
 ## Releasing
 
 Every push to `Main` builds the release files and test-installs them on real
-Windows and Linux machines in GitHub Actions. To publish a release, push a
-version tag:
+Windows and Linux machines in GitHub Actions. To publish a release, either open
+**Actions → Release → Run workflow** on GitHub and enter a version like
+`0.1.0`, or push a version tag:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-The Release workflow then runs the full check, publishes a GitHub release and
-installs it from GitHub on Windows and Linux. A tag with a suffix, like
-`v0.1.0-rc.1`, becomes a pre-release: the install commands and
-`ccunified update` ignore it.
+The Release workflow then runs the full check, publishes a GitHub release (and
+creates the tag, when started from Run workflow) and installs it from GitHub
+on Windows and Linux. A version with a suffix, like `0.1.0-rc.1`, becomes a
+pre-release: the install commands and `ccunified update` ignore it.
 
 ## License
 

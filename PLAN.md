@@ -35,7 +35,7 @@ Status: **plan only. Nothing is built yet.**
 | Password hashing | Done in the browser (600,000 rounds of PBKDF2-SHA256), plus a quick salted hash on the Worker. Measured in step 4: Cloudflare's free plan can't do strong hashing on the server within its 10 ms CPU limit |
 | Tool versions | Always the latest: Node.js 24 LTS, npm 12, Go 1.27, TypeScript 7, Vitest 5, plus the latest of every library and GitHub Action |
 | Full rehearsal data | Uses the real Claude Code logs of the computer it runs on, split file by file between the two simulated machines; the dashboard must match ccusage exactly. CI machines have none, so there it generates a small set |
-| Releases | A version tag publishes a GitHub release; a tag with a suffix (`v0.1.0-rc.1`) is a pre-release that installers and `ccunified update` ignore |
+| Releases | Published from GitHub (Actions → Release → Run workflow, entering a version) or by pushing a version tag; a version with a suffix (`0.1.0-rc.1`) is a pre-release that installers and `ccunified update` ignore |
 | License | MIT, copyright IAmForeverAloneToo |
 | Git | Everything is pushed to `Main` |
 

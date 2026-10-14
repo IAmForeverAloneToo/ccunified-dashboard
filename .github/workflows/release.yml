@@ -1,12 +1,21 @@
 name: Release
 
 # Every push to Main builds the release files and installs them for real on
-# Windows and Linux. Pushing a version tag (v1.2.3) also publishes them as a
-# GitHub release, which is where the one-line installers download from.
+# Windows and Linux. A release is published, which is where the one-line
+# installers download from, by either
+#   - pushing a version tag (v1.2.3), or
+#   - Actions > Release > Run workflow on Main, entering a version (the
+#     workflow then creates the tag on Main's latest commit).
 on:
   push:
     branches: [Main]
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, like 0.1.0 (a suffix such as 0.1.0-rc.1 makes a pre-release)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -34,16 +45,38 @@ jobs:
           cache-dependency-path: agent/go.sum
       - id: version
         name: Work out the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          publish=true
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            if [[ "$GITHUB_REF" != refs/heads/Main ]]; then
+              echo "::error::Releases are made from Main; run the workflow on Main"
+              exit 1
+            fi
+            v="${INPUT_VERSION#v}"
+            if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+              echo "::error::v$v already exists; choose a new version"
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v="${GITHUB_REF_NAME#v}"
           else
             v="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+            publish=false
           fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::\"$v\" isn't a version like 1.2.3 or 1.2.3-rc.1"
+            exit 1
+          fi
+          {
+            echo "version=$v"
+            echo "tag=v$v"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
       - run: npm ci
-      - name: Full check (tags only; Main is checked by the CI workflow)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Full check (releases only; Main is checked by the CI workflow)
+        if: steps.version.outputs.publish == 'true'
         run: npm run check
       - name: Build the dashboard into the program
         run: npm run build:assets
@@ -98,7 +131,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [build, smoke]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -109,19 +142,22 @@ jobs:
           path: dist
       # A version with a suffix (1.2.0-rc.1) is a pre-release: the installers'
       # latest/download links and `ccunified update` never pick it up.
+      # From a pushed tag, the release uses that tag; from Run workflow, it
+      # creates the tag on the commit that was just built and tested.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: |
-          pre=()
-          [[ "$VERSION" == *-* ]] && pre=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "ccunified $VERSION" \
-            --generate-notes \
-            --verify-tag \
-            "${pre[@]}"
+          args=(--repo "$GITHUB_REPOSITORY" --title "ccunified $VERSION" --generate-notes)
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            args+=(--target "$GITHUB_SHA")
+          else
+            args+=(--verify-tag)
+          fi
+          [[ "$VERSION" == *-* ]] && args+=(--prerelease)
+          gh release create "$TAG" dist/* "${args[@]}"
 
   verify:
     name: Install from the GitHub release (${{ matrix.os }})
@@ -137,5 +173,5 @@ jobs:
           sparse-checkout: .github/actions
       - uses: ./.github/actions/install-check
         with:
-          base: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          base: https://github.com/${{ github.repository }}/releases/download/${{ needs.build.outputs.tag }}
           version: ${{ needs.build.outputs.version }}
