@@ -1,4 +1,5 @@
 import type { Series } from "./chart";
+import { stableSeries } from "./series";
 
 /**
  * The tools ccusage reads, by id, with the names its help gives them. The
@@ -37,19 +38,7 @@ export function toolName(id: string): string {
  * Past eight tools, the newest fold into a gray "Other tools".
  */
 export function toolSeries(order: string[], seen: Iterable<string> = []): Map<string, Series> {
-  const all = [...order];
-  for (const id of [...seen].sort()) if (!all.includes(id)) all.push(id);
-  const fold = all.length > 8;
-  const map = new Map<string, Series>();
-  all.forEach((id, i) => {
-    map.set(
-      id,
-      fold && i >= 7
-        ? { id: "other", label: "Other tools", colorClass: "s-other" }
-        : { id, label: toolName(id), colorClass: `s${i + 1}` },
-    );
-  });
-  return map;
+  return stableSeries(order, seen, toolName, "Other tools");
 }
 
 /** Names a machine's tools, in the dashboard's order. */

@@ -50,13 +50,15 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
 
   // Remember which tools have reported usage: per machine, and for the whole
   // dashboard in the order they first appeared (the order of their colors).
+  // Models too, for the colors of their families.
   const reported = [...new Set(rows.map((r) => r.source))];
-  const machineTools = mergeTools(parseList(machine.tools), reported);
-  const dashboardTools = mergeTools(settings.tools, reported);
-  const newTools =
-    dashboardTools.length > settings.tools.length
-      ? setSetting(db, "tools", JSON.stringify(dashboardTools))
-      : null;
+  const machineTools = appendNew(parseList(machine.tools), reported);
+  const remember = (key: "tools" | "models", known: string[], seen: string[]) => {
+    const all = appendNew(known, seen);
+    return all.length > known.length ? [setSetting(db, key, JSON.stringify(all))] : [];
+  };
+  const newTools = remember("tools", settings.tools, reported);
+  const newModels = remember("models", settings.models, [...new Set(rows.map((r) => r.model))]);
 
   const [, deleted, upserted] = await db.batch([
     db
@@ -115,7 +117,8 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
       )
       .bind(machine.id, now, JSON.stringify(rows)),
     ...(learned ? [learned] : []),
-    ...(newTools ? [newTools] : []),
+    ...newTools,
+    ...newModels,
   ]);
 
   const changed = (deleted?.meta.changes ?? 0) + (upserted?.meta.changes ?? 0);
@@ -134,7 +137,7 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
   });
 }
 
-/** `known` followed by the tools in `reported` it doesn't have yet. */
-function mergeTools(known: string[], reported: string[]): string[] {
-  return [...known, ...reported.filter((t) => !known.includes(t))];
+/** `known` followed by the items of `seen` it doesn't have yet, in order. */
+function appendNew(known: string[], seen: string[]): string[] {
+  return [...known, ...seen.filter((t) => !known.includes(t))];
 }

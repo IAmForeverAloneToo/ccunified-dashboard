@@ -34,7 +34,7 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	if string(cf.uploaded) != "export default {}" || cf.uploadedDB != "old-db" || !cf.workersDevOff {
 		t.Fatalf("upload: %q to %s", cf.uploaded, cf.uploadedDB)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql, 0003_models.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	// It explains how to create the token, like setup does.
@@ -75,7 +75,7 @@ func TestServerUpdateFromTheFirstRelease(t *testing.T) {
 	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	rows, err := cf.db.Query(ctx, "SELECT id, tools FROM machines ORDER BY id")
@@ -85,6 +85,11 @@ func TestServerUpdateFromTheFirstRelease(t *testing.T) {
 	rows, err = cf.db.Query(ctx, "SELECT value FROM settings WHERE key = 'tools'")
 	if err != nil || len(rows) != 1 || rows[0]["value"] != `["claude"]` {
 		t.Fatalf("settings: %v %v", rows, err)
+	}
+	// The models seen so far, for the chart's colors.
+	rows, err = cf.db.Query(ctx, "SELECT value FROM settings WHERE key = 'models'")
+	if err != nil || len(rows) != 1 || rows[0]["value"] != `["claude-opus-5-5"]` {
+		t.Fatalf("models: %v %v", rows, err)
 	}
 }
 

@@ -73,6 +73,15 @@ async function openPicker(page: Page): Promise<Locator> {
   return dialog;
 }
 
+/** Picks an option of a filter by clicking its label, as a person would. */
+async function choose(page: Page, name: string, value: string) {
+  const option = page
+    .locator("label")
+    .filter({ has: page.locator(`input[name="${name}"][value="${value}"]`) });
+  await expect(option).toBeVisible();
+  await option.click();
+}
+
 const day = (page: Page, date: string) => page.locator(`.drp-day[data-date="${date}"]`);
 const status = (dialog: Locator) => dialog.locator(".drp-status");
 const field = (dialog: Locator, name: "From" | "To") => dialog.getByLabel(name, { exact: true });
@@ -297,11 +306,16 @@ test.describe("tools other than Claude Code", () => {
     page,
   }) => {
     await logIn(page);
-    await page.locator('input[name="by"][value="tool"]').check({ force: true });
+    // "Tool" appears once the data shows a second tool.
+    const toolOption = page
+      .locator("label")
+      .filter({ has: page.locator('input[name="by"][value="tool"]') });
+    await expect(toolOption).toBeVisible();
+    await toolOption.click();
     await expect(page).toHaveURL(/by=tool/);
     await expect(page.getByRole("heading", { name: "Daily tokens by tool" })).toBeVisible();
     const legend = page.locator(".legend");
-    for (const name of ["Claude Code", "Codex", "Gemini CLI", "OpenCode"]) {
+    for (const name of ["Claude Code", "Codex", "Gemini CLI", "OpenCode", "Kimi"]) {
       await expect(legend.getByText(name, { exact: true })).toBeVisible();
     }
 
@@ -318,12 +332,13 @@ test.describe("tools other than Claude Code", () => {
       }
       return { tools: s.tools as string[], totals };
     });
-    expect(api.tools).toEqual(["claude", "codex", "gemini", "opencode"]);
+    expect(api.tools).toEqual(["claude", "codex", "gemini", "opencode", "kimi"]);
     const names: Record<string, string> = {
       claude: "Claude Code",
       codex: "Codex",
       gemini: "Gemini CLI",
       opencode: "OpenCode",
+      kimi: "Kimi",
     };
     const table = page
       .locator(".card")
@@ -340,10 +355,12 @@ test.describe("tools other than Claude Code", () => {
     // Reloading keeps the split; models of all tools are grouped into families.
     await page.reload();
     await expect(page.locator('input[name="by"][value="tool"]')).toBeChecked();
-    await page.locator('input[name="by"][value="model"]').check({ force: true });
-    for (const family of ["Opus", "Sonnet", "GPT", "Gemini"]) {
+    await choose(page, "by", "model");
+    await expect(page.locator('input[name="by"][value="model"]')).toBeChecked();
+    for (const family of ["Opus", "Sonnet", "Haiku", "Mythos", "GPT", "Gemini", "Kimi"]) {
       await expect(legend.getByText(family, { exact: true })).toBeVisible();
     }
+    await expect(legend.getByText("Other models")).toHaveCount(0);
   });
 
   test("the Machines page lists each machine's tools", async ({ page }) => {
@@ -402,5 +419,32 @@ test("Settings checks for updates on request and says when GitHub couldn't be re
     demo.github.latest = "0.1.0-demo";
     await check.click();
     await expect(status).toContainText("It's up to date.");
+  }
+});
+
+test("model families keep their colors in every period", async ({ page }) => {
+  await logIn(page);
+  /** Each legend entry's color, after loading the overview for a period. */
+  const colors = async (range: string) => {
+    await page.goto(new URL(`/?range=${range}&by=model`, demo.url).href);
+    await expect(page.locator(".legend-item").first()).toBeVisible();
+    return page
+      .locator(".legend-item")
+      .evaluateAll((items) =>
+        Object.fromEntries(
+          items.map((i) => [
+            i.textContent?.trim() ?? "",
+            [...(i.querySelector(".swatch")?.classList ?? [])].find((c) => c !== "swatch"),
+          ]),
+        ),
+      );
+  };
+  const ninety = await colors("90");
+  expect(ninety.Kimi).toMatch(/^s\d$/);
+  expect(ninety.Mythos).toMatch(/^s\d$/);
+  for (const range of ["30", "7"]) {
+    for (const [family, color] of Object.entries(await colors(range))) {
+      expect(color, `${family} in ${range} days`).toBe(ninety[family]);
+    }
   }
 });

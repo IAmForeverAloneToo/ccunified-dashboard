@@ -123,6 +123,8 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
       to,
       /** Every tool the dashboard has seen, in the order they first appeared. */
       tools: settings.tools,
+      /** Every model the dashboard has seen, in the order they first appeared. */
+      models: settings.models,
       by_day_machine: [...byMachine.values()],
       by_day_model: [...byModel.values()],
       by_day_source: [...bySource.values()],

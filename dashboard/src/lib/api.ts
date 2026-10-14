@@ -96,6 +96,8 @@ export interface Summary {
   to: string;
   /** Every tool the dashboard has seen, in the order they first appeared. */
   tools: string[];
+  /** Every model the dashboard has seen, in the order they first appeared. */
+  models: string[];
   by_day_machine: (Totals & { day: string; machine_id: string })[];
   by_day_model: (Totals & { day: string; model: string })[];
   by_day_source: (Totals & { day: string; source: string })[];

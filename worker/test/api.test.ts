@@ -181,11 +181,14 @@ describe("summary", () => {
     });
     const body = (await res.json()) as {
       tools: string[];
+      models: string[];
       by_day_source: { day: string; source: string; input_tokens: number }[];
       by_machine_source: { machine_id: string; source: string; input_tokens: number }[];
       by_day_model: { day: string; model: string; input_tokens: number }[];
     };
     expect(body.tools).toEqual(["claude", "codex"]);
+    // In the order the dashboard first saw them (opus and haiku came in the first summary test).
+    expect(body.models).toEqual(["opus", "haiku", "gpt-5.5"]);
     expect(
       Object.fromEntries(body.by_day_source.map((r) => [`${r.day} ${r.source}`, r.input_tokens])),
     ).toEqual({ "2026-08-01 claude": 10, "2026-08-01 codex": 3, "2026-08-02 codex": 3 });

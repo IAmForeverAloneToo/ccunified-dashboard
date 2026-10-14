@@ -10,6 +10,8 @@ export interface Settings {
   latestCheckError: string | null;
   /** Every tool the dashboard has seen, in the order they first appeared. */
   tools: string[];
+  /** Every model the dashboard has seen, in the order they first appeared. */
+  models: string[];
 }
 
 export async function getSettings(db: D1Database): Promise<Settings> {
@@ -26,6 +28,7 @@ export async function getSettings(db: D1Database): Promise<Settings> {
     latestCheckedAt: checked ? Number(checked) : null,
     latestCheckError: map.get("latest_check_error") ?? null,
     tools: parseList(map.get("tools")),
+    models: parseList(map.get("models")),
   };
 }
 

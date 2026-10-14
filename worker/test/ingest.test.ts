@@ -371,6 +371,75 @@ describe("the database update for format 2", () => {
   });
 });
 
+describe("models in the order they first appeared", () => {
+  const usage = (name: string) => ({
+    model: name,
+    input_tokens: 1,
+    output_tokens: 1,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    cost_usd: 0.01,
+  });
+  const dashboardModels = async () => {
+    const [row] = await w.sql("SELECT value FROM settings WHERE key = 'models'");
+    return JSON.parse(String(row?.value)) as string[];
+  };
+
+  test("uploads add new models to the end; nothing is reordered", async () => {
+    const before = await dashboardModels();
+    const m = await w.createMachine();
+    await upload(
+      m.token,
+      payload({
+        schema_version: 2,
+        sources: ["claude", "kimi"],
+        days: [
+          { date: "2026-10-11", source: "kimi", models: [usage("k3")] },
+          { date: "2026-10-12", source: "claude", models: [usage("claude-mythos-5-1")] },
+        ],
+      }),
+    );
+    expect(await dashboardModels()).toEqual([
+      ...before.filter((x) => x !== "k3" && x !== "claude-mythos-5-1"),
+      ...["k3", "claude-mythos-5-1"].filter((x) => !before.includes(x)),
+    ]);
+    const after = await dashboardModels();
+    await allowNextUpload(m.id);
+    await upload(
+      m.token,
+      payload({
+        days: [{ date: "2026-10-12", source: "claude", models: [usage("claude-mythos-5-1")] }],
+      }),
+    );
+    expect(await dashboardModels()).toEqual(after);
+  });
+
+  test("the database update lists earlier usage's models by the day each first appeared", async () => {
+    const m = await w.createMachine();
+    await upload(
+      m.token,
+      payload({
+        range: { from: "2020-01-01", to: "2020-01-03" },
+        days: [
+          { date: "2020-01-01", source: "claude", models: [usage("zz-first"), usage("aa-first")] },
+          { date: "2020-01-03", source: "claude", models: [usage("zz-first"), usage("mm-later")] },
+        ],
+      }),
+    );
+    await w.sql("DELETE FROM settings WHERE key = 'models'");
+    const migration = readFileSync(
+      join(import.meta.dirname, "../migrations/0003_models.sql"),
+      "utf8",
+    );
+    for (const statement of splitSql(migration)) await w.sql(statement);
+    const models = await dashboardModels();
+    // Same first day: by name. Every model in the database is listed once.
+    expect(models.slice(0, 3)).toEqual(["aa-first", "zz-first", "mm-later"]);
+    const distinct = await w.sql("SELECT DISTINCT model FROM usage_daily");
+    expect(models.sort()).toEqual(distinct.map((r) => String(r.model)).sort());
+  });
+});
+
 describe("refusals", () => {
   test("a different time zone is refused with the dashboard's zone", async () => {
     const m = await w.createMachine();

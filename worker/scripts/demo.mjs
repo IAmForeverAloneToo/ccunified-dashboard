@@ -138,6 +138,7 @@ async function seedDemo(db) {
     ["claude-opus-5-5", 1.0, 15],
     ["claude-sonnet-5-5", 0.6, 3],
     ["claude-haiku-5-5", 0.25, 0.8],
+    ["claude-mythos-5-1", 0.08, 25],
   ];
   const codex = [["gpt-5.5", 0.5, 1.25]];
   const gemini = [
@@ -145,6 +146,7 @@ async function seedDemo(db) {
     ["gemini-3-flash", 0.15, 0.3],
   ];
   const opencode = [["anthropic/claude-sonnet-5-5", 0.35, 3]];
+  const kimi = [["k3", 0.3, 3]];
   const machines = [
     {
       name: "Office PC",
@@ -181,13 +183,13 @@ async function seedDemo(db) {
       seen: now - 25 * 60e3,
       interval: 60,
       created: 20,
-      tools: { claude, opencode },
+      tools: { claude, opencode, kimi },
     },
   ];
   // The order the dashboard first saw each tool in, which sets their colors.
   await db
     .prepare("UPDATE settings SET value = ?1 WHERE key = 'tools'")
-    .bind(JSON.stringify(["claude", "codex", "gemini", "opencode"]))
+    .bind(JSON.stringify(["claude", "codex", "gemini", "opencode", "kimi"]))
     .run();
   let seedValue = 42;
   const rand = () => {
@@ -259,6 +261,12 @@ async function seedDemo(db) {
     }
     for (let i = 0; i < rows.length; i += 50) await db.batch(rows.slice(i, i + 50));
   }
+  // Every model in the order it first appeared, as uploads record it.
+  await db
+    .prepare(
+      "UPDATE settings SET value = (SELECT json_group_array(model) FROM (SELECT model FROM usage_daily GROUP BY model ORDER BY MIN(day), model)) WHERE key = 'models'",
+    )
+    .run();
   await db
     .prepare(
       "INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch, agent_version, sync_interval_minutes, client_ip, created_at, expires_at, status) VALUES (?1, ?2, 'K7QX-82MD', 'Studio PC', 'windows', 'amd64', '0.1.0-demo', 30, '203.0.113.24', ?3, ?4, 'pending')",

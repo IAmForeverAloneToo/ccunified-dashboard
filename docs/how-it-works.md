@@ -194,7 +194,7 @@ without a login. Every other path serves the dashboard's pages.
 
 | Table | Holds |
 |---|---|
-| `settings` | Time zone, a random install ID (part of the password salt), the latest known release, and every tool seen so far in the order it first appeared (the order of the tools' chart colors) |
+| `settings` | Time zone, a random install ID (part of the password salt), the latest known release and the outcome of the last check for one, and every tool and every model seen so far in the order each first appeared (the order of their chart colors) |
 | `users` | Username, role (admin or viewer), password hash, two-factor secret, whether a new password is required, status |
 | `recovery_codes` | Two-factor recovery codes, as hashes |
 | `sessions` | Login sessions, as hashes of their tokens |

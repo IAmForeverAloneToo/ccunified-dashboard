@@ -12,6 +12,8 @@ import { rangePicker } from "../lib/daterange";
 import { daysInclusive, formatRange, isDate, MAX_RANGE_DAYS } from "../lib/dates";
 import { type Child, fill, h, s, segmented } from "../lib/dom";
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
+import { familySeries, modelFamily } from "../lib/models";
+import { seriesOf } from "../lib/series";
 import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
 
@@ -76,35 +78,6 @@ function addInto(into: Totals, t: Totals): void {
 }
 
 // ---------- Colors that follow the entity, never its rank ----------
-
-/**
- * Model families get fixed chart colors; versions of a family share one.
- * Names are matched in this order, so "anthropic/claude-opus-5-5" is Opus.
- */
-const FAMILIES: [id: string, label: string, match: RegExp][] = [
-  ["opus", "Opus", /opus/],
-  ["sonnet", "Sonnet", /sonnet/],
-  ["haiku", "Haiku", /haiku/],
-  ["fable", "Fable", /fable/],
-  ["gpt", "GPT", /gpt|codex|(^|\/)o\d/],
-  ["gemini", "Gemini", /gemini/],
-  ["grok", "Grok", /grok/],
-];
-
-type Family = { id: string; label: string; colorClass: string };
-
-const familySeries: Family[] = FAMILIES.map(([id, label], i) => ({
-  id,
-  label,
-  colorClass: `s${i + 1}`,
-}));
-const otherModels: Family = { id: "other", label: "Other models", colorClass: "s-other" };
-
-export function modelFamily(model: string): Family {
-  const lower = model.toLowerCase();
-  const index = FAMILIES.findIndex(([, , match]) => match.test(lower));
-  return familySeries[index] ?? otherModels;
-}
 
 /**
  * Machines keep the color of their position in the order they joined
@@ -493,20 +466,20 @@ export async function overviewPage(ctx: PageContext) {
       return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? "other" };
     }
     if (state.split === "tool") {
-      const map = toolSeries(
-        s.tools,
-        s.by_day_source.map((r) => r.source),
-      );
-      const seen = new Set(s.by_day_source.map((r) => map.get(r.source)?.id ?? "other"));
-      const all = [...new Map([...map.values()].map((sr) => [sr.id, sr])).values()];
+      const sources = s.by_day_source.map((r) => r.source);
+      const map = toolSeries(s.tools, sources);
       return {
-        series: all.filter((sr) => seen.has(sr.id)),
+        series: seriesOf(map, sources),
         keyOf: (r) => map.get(String(r.source))?.id ?? "other",
       };
     }
-    const seen = new Set(s.by_day_model.map((r) => modelFamily(r.model).id));
-    const series = [...familySeries, otherModels].filter((f) => seen.has(f.id));
-    return { series, keyOf: (r) => modelFamily(String(r.model)).id };
+    const models = s.by_day_model.map((r) => r.model);
+    const map = familySeries(s.models, models);
+    const familyOf = (model: string) => modelFamily(model).id;
+    return {
+      series: seriesOf(map, models.map(familyOf)),
+      keyOf: (r) => map.get(familyOf(String(r.model)))?.id ?? "other",
+    };
   }
 
   function drawChart(s: Summary) {
@@ -757,6 +730,10 @@ export async function overviewPage(ctx: PageContext) {
   }
 
   function drawModels(s: Summary) {
+    const families = familySeries(
+      s.models,
+      s.by_day_model.map((r) => r.model),
+    );
     const byModel = new Map<string, Totals>();
     for (const r of s.by_day_model) {
       const t = byModel.get(r.model) ?? emptyTotals();
@@ -770,7 +747,8 @@ export async function overviewPage(ctx: PageContext) {
         "Usage in this period, per model. The chart groups models by family.",
         [...byModel].map(([model, totals]) => ({
           label: model,
-          colorClass: state.split === "model" ? modelFamily(model).colorClass : undefined,
+          colorClass:
+            state.split === "model" ? families.get(modelFamily(model).id)?.colorClass : undefined,
           totals,
         })),
       ),

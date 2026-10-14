@@ -90,10 +90,15 @@ as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
 - **Colors:** each tool keeps its color: tools get colors in the order the
   dashboard first saw them. Past eight tools, the newest share a gray *Other
   tools* in the chart (the Tools table still lists each one).
-- **Models** are grouped into families in the chart (Opus, Sonnet, Haiku,
-  Fable, GPT, Gemini, Grok and other models), whichever tool used them; the
-  Models table lists every exact model name. A model used through several
-  tools (say, Claude Sonnet in Claude Code and in OpenCode) is one model.
+- **Models** are grouped into families in the chart, whichever tool used
+  them, and the Models table lists every exact model name. Claude models are
+  grouped by the name after "claude" (Opus, Sonnet, Haiku, Mythos, and any
+  new family), other vendors' models by their family (GPT, Gemini, Grok,
+  Kimi, Qwen, GLM, DeepSeek, …), and anything else by the first word of its
+  name. Like tools, families get colors in the order the dashboard first saw
+  them, and only past eight families do the newest share a gray *Other
+  models*. A model used through several tools (say, Claude Sonnet in Claude
+  Code and in OpenCode) is one model.
 
 Costs are **estimates at API prices**, calculated by ccusage on each machine
 (OpenCode's are the costs OpenCode itself recorded). A subscription isn't
