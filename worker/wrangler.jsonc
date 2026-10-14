@@ -1,0 +1,19 @@
+// Local development and tests only.
+// Real deployments are created by `ccunified setup`, which uploads the bundled
+// Worker through the Cloudflare API with your own database ID. Nothing in this
+// file is used in production.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "ccunified-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ccunified-dev",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

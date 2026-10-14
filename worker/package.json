@@ -1,0 +1,23 @@
+{
+  "name": "@ccunified/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "node build.mjs",
+    "typecheck": "tsc -p . && tsc -p test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "4.13.13",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261014.1",
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261012.0-beta",
+    "vitest": "5.0.4",
+    "wrangler": "4.151.0"
+  }
+}

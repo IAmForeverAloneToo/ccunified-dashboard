@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars*
+*.log
+coverage/
+test-results/
+playwright-report/
+
+# generated build inputs
+worker/src/generated/
+agent/internal/embedded/assets/
+agent/internal/ccusage/bin/
+
+# Go build output
+agent/bin/
+/out/
