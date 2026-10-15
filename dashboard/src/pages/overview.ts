@@ -14,6 +14,7 @@ import { type Child, fill, h, s, segmented } from "../lib/dom";
 import {
   allowedModels,
   applyFilters,
+  available,
   type Filters,
   isFiltered,
   noFilters,
@@ -295,6 +296,15 @@ export async function overviewPage(ctx: PageContext) {
   const knownModels = () =>
     known(summary?.models ?? [], summary?.detail?.models ?? [], state.filters.models);
 
+  // Each list offers only what was used, in the period shown, together with
+  // the picks in the other lists. Picks that no longer match stay listed,
+  // ticked and marked, so it's clear why the page is empty.
+  const offered = () => (summary ? available(summary, state.filters) : null);
+  const staleNote = (othersFiltered: boolean) =>
+    othersFiltered ? "no usage with your other filters" : "no usage in this period";
+  const notes = (...parts: (string | false)[]) => parts.filter(Boolean).join(" · ") || undefined;
+  const nothingLeft = "Nothing was used with your other filters in this period.";
+
   function setFilters(change: Partial<Filters>, push: boolean) {
     state.filters = { ...state.filters, ...change };
     writeUrl(push);
@@ -304,19 +314,41 @@ export async function overviewPage(ctx: PageContext) {
   const machineSelect = multiSelect({
     label: "Machines",
     allLabel: "All machines",
-    choices: () =>
-      machines.map((m) => ({
-        id: m.id,
-        label: m.name,
-        note: m.revoked_at !== null ? "revoked" : undefined,
-      })),
+    emptyText: nothingLeft,
+    choices: () => {
+      const f = state.filters;
+      const ok = offered()?.machines;
+      const others = f.tools.length + f.families.length + f.models.length > 0;
+      return machines
+        .filter((m) => !ok || ok.has(m.id) || f.machines.includes(m.id))
+        .map((m) => {
+          const stale = ok !== undefined && !ok.has(m.id);
+          return {
+            id: m.id,
+            label: m.name,
+            stale,
+            note: notes(m.revoked_at !== null && "revoked", stale && staleNote(others)),
+          };
+        });
+    },
     selected: () => new Set(state.filters.machines),
     onChange: (next, first) => setFilters({ machines: [...next] }, first),
   });
   const toolSelect = multiSelect({
     label: "Tools",
     allLabel: "All tools",
-    choices: () => knownTools().map((id) => ({ id, label: toolName(id) })),
+    emptyText: nothingLeft,
+    choices: () => {
+      const f = state.filters;
+      const ok = offered()?.tools;
+      const others = f.machines.length + f.families.length + f.models.length > 0;
+      return knownTools()
+        .filter((id) => !ok || ok.has(id) || f.tools.includes(id))
+        .map((id) => {
+          const stale = ok !== undefined && !ok.has(id);
+          return { id, label: toolName(id), stale, note: notes(stale && staleNote(others)) };
+        });
+    },
     selected: () => new Set(state.filters.tools),
     onChange: (next, first) => setFilters({ tools: [...next] }, first),
   });
@@ -324,15 +356,45 @@ export async function overviewPage(ctx: PageContext) {
   const modelSelect = multiSelect({
     label: "Models",
     allLabel: "All models",
+    emptyText: nothingLeft,
     choices: () => {
+      const f = state.filters;
+      const ok = offered()?.models;
+      const note = staleNote(f.machines.length + f.tools.length > 0);
+      // Every known model stays in its family (so ticking all of a family's
+      // listed models doesn't pick models that are only hidden); the ones
+      // with no matching usage are hidden.
       const families = new Map<string, Choice & { children: Choice[] }>();
       for (const m of knownModels()) {
-        const f = modelFamily(m);
-        const family = families.get(f.id) ?? { id: `f:${f.id}`, label: f.label, children: [] };
-        family.children.push({ id: `m:${m}`, label: m });
-        families.set(f.id, family);
+        const fam = modelFamily(m);
+        const family = families.get(fam.id) ?? {
+          id: `f:${fam.id}`,
+          label: fam.label,
+          children: [],
+        };
+        const used = !ok || ok.has(m);
+        const picked = f.models.includes(m);
+        family.children.push({
+          id: `m:${m}`,
+          label: m,
+          hidden: !used && !picked,
+          stale: !used && picked,
+          note: !used && picked ? note : undefined,
+        });
+        families.set(fam.id, family);
       }
-      return [...families.values()];
+      return [...families.values()].map((family) => {
+        const picked = f.families.includes(family.id.slice(2));
+        const anyShown = family.children.some((k) => !k.hidden);
+        const anyUsed = family.children.some((k) => !k.hidden && !k.stale);
+        const stale = picked && !anyUsed;
+        return {
+          ...family,
+          hidden: !anyShown && !picked,
+          stale,
+          note: stale ? note : undefined,
+        };
+      });
     },
     selected: () =>
       new Set([
@@ -363,10 +425,17 @@ export async function overviewPage(ctx: PageContext) {
   /** Shows the dropdowns that have something to choose from, and Clear when any filter is on. */
   function paintLimits() {
     const f = state.filters;
-    machineSelect.element.hidden = machines.length < 2 && f.machines.length === 0;
-    toolSelect.element.hidden = knownTools().length < 2 && f.tools.length === 0;
+    // A list appears once the period has more than one of its kind, and stays
+    // however far the other filters narrow it.
+    const d = summary?.detail;
+    machineSelect.element.hidden =
+      (d ? d.machines.length : machines.length) < 2 && f.machines.length === 0;
+    toolSelect.element.hidden =
+      (d ? d.sources.length : knownTools().length) < 2 && f.tools.length === 0;
     modelSelect.element.hidden =
-      knownModels().length < 2 && f.families.length === 0 && f.models.length === 0;
+      (d ? d.models.length : knownModels().length) < 2 &&
+      f.families.length === 0 &&
+      f.models.length === 0;
     clearFilters.hidden = !isFiltered(f);
     limits.hidden = selects.every((x) => x.element.hidden) && clearFilters.hidden;
     for (const x of selects) x.refresh();
@@ -892,7 +961,7 @@ export async function overviewPage(ctx: PageContext) {
   const resize = new ResizeObserver(() => {
     if (chartBox.clientWidth !== lastWidth && summary && !state.tableView) {
       lastWidth = chartBox.clientWidth;
-      if (summary) drawChart(summary);
+      drawChart(applyFilters(summary, state.filters));
     }
   });
   resize.observe(chartBox);

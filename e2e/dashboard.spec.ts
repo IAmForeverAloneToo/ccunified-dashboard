@@ -3,6 +3,8 @@
  * data: 90 days of usage for four machines, with some days missing.
  */
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { modelFamily } from "../dashboard/src/lib/models";
+import { toolName } from "../dashboard/src/lib/tools";
 import { startDemo } from "../worker/scripts/demo.mjs";
 
 let demo: Awaited<ReturnType<typeof startDemo>>;
@@ -500,29 +502,43 @@ test.describe("filters", () => {
       name,
     );
 
-  test("pick tools and machines; totals follow; reload and Back keep up", async ({ page }) => {
+  test("pick machines and tools; totals follow; reload and Back keep up", async ({ page }) => {
     await logIn(page);
-    await expect(filterButton(page, "Tools")).toHaveText(/All/);
+    await expect(filterButton(page, "Machines")).toHaveText(/All/);
 
-    let list = await openFilter(page, "Tools");
-    await list.getByRole("checkbox", { name: "Kimi" }).check();
-    await expect(page).toHaveURL(/tool=kimi/);
-    await expect(list.getByRole("checkbox", { name: "All tools" })).not.toBeChecked();
-    await page.keyboard.press("Escape");
-    await expect(list).toBeHidden();
-    await expect(filterButton(page, "Tools")).toBeFocused();
-    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
-    await expect(tile(page, "Tokens")).toHaveText(
-      compact(await apiTokens30(page, "source", ["kimi"])),
-    );
-
-    // Machines too: both filters apply.
-    list = await openFilter(page, "Machines");
+    let list = await openFilter(page, "Machines");
     await list.getByRole("checkbox", { name: "Office PC" }).check();
     await list.getByRole("checkbox", { name: "Home PC" }).check();
-    await page.mouse.click(5, 5);
+    await expect(page).toHaveURL(/machine=/);
+    await expect(list.getByRole("checkbox", { name: "All machines" })).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    await expect(list).toBeHidden();
+    await expect(filterButton(page, "Machines")).toBeFocused();
     await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
+    const office = await machineId(page, "Office PC");
     const home = await machineId(page, "Home PC");
+    await expect(tile(page, "Tokens")).toHaveText(
+      compact(await apiTokens30(page, "machine", [office, home])),
+    );
+    await expect(tile(page, "Machines reporting")).toHaveText(/of 2$/);
+    // The chart keeps to the filter when it redraws for a new width.
+    const legendItems = page.locator(".legend .legend-item");
+    await expect(legendItems).toHaveText(["Office PC", "Home PC"]);
+    const size = page.viewportSize();
+    if (size) {
+      const svg = page.locator(".chart svg");
+      const before = await svg.getAttribute("viewBox");
+      await page.setViewportSize({ width: 800, height: size.height });
+      await expect(svg).not.toHaveAttribute("viewBox", before ?? "");
+      await expect(legendItems).toHaveText(["Office PC", "Home PC"]);
+      await page.setViewportSize(size);
+    }
+
+    // Tools too: both filters apply. Kimi is offered because Home PC used it.
+    list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Kimi" }).check();
+    await page.mouse.click(5, 5);
+    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
     const both = await page.evaluate(
       async ([id]) => {
         const s = await (await fetch("/api/summary?days=30")).json();
@@ -538,7 +554,6 @@ test.describe("filters", () => {
       [home],
     );
     await expect(tile(page, "Tokens")).toHaveText(compact(both)); // Kimi only runs on Home PC
-    await expect(tile(page, "Machines reporting")).toHaveText(/of 2$/);
 
     await page.reload();
     await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
@@ -547,10 +562,10 @@ test.describe("filters", () => {
 
     // Back undoes one opening of a dropdown at a time.
     await page.goBack();
-    await expect(filterButton(page, "Machines")).toHaveText(/All/);
-    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
-    await page.goForward();
+    await expect(filterButton(page, "Tools")).toHaveText(/All/);
     await expect(filterButton(page, "Machines")).toHaveText(/Home PC, Office PC/);
+    await page.goForward();
+    await expect(filterButton(page, "Tools")).toHaveText(/Kimi/);
 
     await page.getByRole("button", { name: "Clear filters" }).first().click();
     await expect(page).not.toHaveURL(/tool=|machine=/);
@@ -628,17 +643,162 @@ test.describe("filters", () => {
       .toEqual(kimiDays);
   });
 
+  /** What the lists should offer, worked out from the API's rows for the last 30 days. */
+  async function expectedOffers(
+    page: Page,
+    keep: { machines?: string[]; tools?: string[]; families?: string[] },
+  ) {
+    const d = await page.evaluate(async () => {
+      const s = await (await fetch("/api/summary?days=30&detail=1")).json();
+      const m = await (await fetch("/api/machines")).json();
+      const names = Object.fromEntries(
+        m.machines.map((x: { id: string; name: string }) => [x.id, x.name]),
+      );
+      return {
+        rows: (s.detail.rows as number[][]).map((r) => ({
+          machine: names[s.detail.machines[r[1] as number]] as string,
+          tool: s.detail.sources[r[2] as number] as string,
+          model: s.detail.models[r[3] as number] as string,
+          tokens: (r[4] as number) + (r[5] as number) + (r[6] as number) + (r[7] as number),
+        })),
+      };
+    });
+    const okM = (x: string) => !keep.machines || keep.machines.includes(x);
+    const okT = (x: string) => !keep.tools || keep.tools.includes(x);
+    const okK = (x: string) => !keep.families || keep.families.includes(modelFamily(x).label);
+    const machines = new Set<string>();
+    const tools = new Set<string>();
+    const families = new Set<string>();
+    for (const r of d.rows) {
+      if (r.tokens === 0) continue;
+      if (okT(r.tool) && okK(r.model)) machines.add(r.machine);
+      if (okM(r.machine) && okK(r.model)) tools.add(toolName(r.tool));
+      if (okM(r.machine) && okT(r.tool)) families.add(modelFamily(r.model).label);
+    }
+    return {
+      machines: [...machines].sort(),
+      tools: [...tools].sort(),
+      families: [...families].sort(),
+    };
+  }
+
+  /** The items a list shows (top level only; families for Models), sorted. */
+  async function listed(page: Page, name: string) {
+    const list = await openFilter(page, name);
+    const items = await list
+      .locator(".ms-list > ul > li")
+      .evaluateAll((lis) =>
+        lis.map((li) => li.querySelector("label span")?.textContent?.trim() ?? ""),
+      );
+    await page.keyboard.press("Escape");
+    await expect(list).toBeHidden();
+    return items.sort();
+  }
+
+  test("each list only offers what matches the picks in the others", async ({ page }) => {
+    await logIn(page);
+    const all = await expectedOffers(page, {});
+    expect(await listed(page, "Tools")).toEqual(all.tools);
+
+    // Laptop: only its tools and model families.
+    let list = await openFilter(page, "Machines");
+    await list.getByRole("checkbox", { name: "Laptop" }).check();
+    // A list isn't narrowed by its own picks.
+    await expect(list.getByRole("checkbox", { name: "Office PC" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    const laptop = await expectedOffers(page, { machines: ["Laptop"] });
+    expect(laptop.tools).toEqual(["Claude Code", "Gemini CLI"]);
+    expect(await listed(page, "Tools")).toEqual(laptop.tools);
+    expect(await listed(page, "Models")).toEqual(laptop.families);
+    expect(laptop.families).not.toContain("Kimi");
+
+    // Then Gemini CLI: the machines that used it.
+    list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Gemini CLI" }).check();
+    await page.keyboard.press("Escape");
+    const gemini = await expectedOffers(page, { tools: ["gemini"] });
+    expect(await listed(page, "Machines")).toEqual(gemini.machines);
+
+    // The same picks in the other order give the same lists.
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Gemini CLI" }).check();
+    await page.keyboard.press("Escape");
+    expect(await listed(page, "Machines")).toEqual(gemini.machines);
+
+    // A machine that used only Claude Code: the Tools list stays, with one item.
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    list = await openFilter(page, "Machines");
+    await list.getByRole("checkbox", { name: "Build server" }).check();
+    await page.keyboard.press("Escape");
+    await expect(filterButton(page, "Tools")).toBeVisible();
+    expect(await listed(page, "Tools")).toEqual(["Claude Code"]);
+
+    // Models: a family's list only holds its matching models.
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "OpenCode" }).check();
+    await page.keyboard.press("Escape");
+    list = await openFilter(page, "Models");
+    await list.getByRole("button", { name: /^Sonnet: show its 1 model$/ }).click();
+    await expect(list.getByRole("checkbox", { name: "anthropic/claude-sonnet-5-5" })).toBeVisible();
+    await expect(
+      list.getByRole("checkbox", { name: "claude-sonnet-5-5", exact: true }),
+    ).toHaveCount(0);
+    // Ticking the only listed Sonnet model picks just that model, not the hidden one too.
+    await list.getByRole("checkbox", { name: "anthropic/claude-sonnet-5-5" }).check();
+    await expect(page).toHaveURL(/model=anthropic%2Fclaude-sonnet-5-5/);
+    await expect(page).not.toHaveURL(/family=sonnet/);
+    await page.keyboard.press("Escape");
+  });
+
+  test("a pick with no usage in a new period stays, marked, until unticked", async ({ page }) => {
+    await logIn(page);
+    // Kimi is only on Home PC, which joined 20 days ago.
+    let list = await openFilter(page, "Tools");
+    await list.getByRole("checkbox", { name: "Kimi" }).check();
+    await page.keyboard.press("Escape");
+    const today = await dashboardToday(page);
+    await page.locator(".range-button").click();
+    const dialog = page.getByRole("dialog", { name: "Choose dates" });
+    await field(dialog, "From").fill(addDays(today, -60));
+    await field(dialog, "To").fill(addDays(today, -40));
+    await dialog.getByRole("button", { name: "Apply" }).click();
+    await expect(page.getByText("Nothing matches these filters in this period")).toBeVisible();
+
+    list = await openFilter(page, "Tools");
+    const kimi = list.getByRole("checkbox", { name: /Kimi/ });
+    await expect(kimi).toBeChecked();
+    await expect(list.locator(".ms-option.stale")).toContainText("Kimino usage in this period");
+    await kimi.uncheck();
+    await expect(list.getByRole("checkbox", { name: /Kimi/ })).toBeVisible(); // until the list reopens
+    await page.keyboard.press("Escape");
+    list = await openFilter(page, "Tools");
+    await expect(list.getByRole("checkbox", { name: /Kimi/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".legend-item").first()).toBeVisible();
+  });
+
   test("filters that match nothing say so", async ({ page }) => {
     await logIn(page);
-    // Codex only runs on Office PC.
-    let list = await openFilter(page, "Tools");
-    await list.getByRole("checkbox", { name: "Codex" }).check();
-    await page.keyboard.press("Escape");
-    list = await openFilter(page, "Machines");
-    await list.getByRole("checkbox", { name: "Laptop" }).check();
-    await page.keyboard.press("Escape");
+    // Codex only runs on Office PC, so the lists never offer Codex with
+    // Laptop; a shared address can still ask for it.
+    const laptop = await machineId(page, "Laptop");
+    await page.goto(new URL(`/?range=30&tool=codex&machine=${laptop}`, demo.url).href);
     await expect(page.getByText("Nothing matches these filters in this period")).toBeVisible();
     await expect(tile(page, "Tokens")).toHaveText("0");
+    // Both picks are kept, marked, so it's clear why.
+    let list = await openFilter(page, "Tools");
+    await expect(list.getByRole("checkbox", { name: /Codex/ })).toBeChecked();
+    await expect(list.locator(".ms-option.stale")).toContainText(
+      "no usage with your other filters",
+    );
+    await page.keyboard.press("Escape");
+    list = await openFilter(page, "Models");
+    await expect(
+      list.getByText("Nothing was used with your other filters in this period."),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
     await page.locator(".empty").getByRole("button", { name: "Clear filters" }).click();
     await expect(filterButton(page, "Tools")).toHaveText(/All/);
     await expect(page.locator(".legend-item").first()).toBeVisible();

@@ -581,6 +581,37 @@ test("filters show exactly what ccusage reports for those machines, tools and mo
     await expectTable("Models", sum(totals), label);
   }
 
+  // With one machine picked, the other lists offer only what ccusage found
+  // on that machine.
+  const listed = async (name: string) => {
+    await filterButton(name).click();
+    const list = page.getByRole("dialog", { name: `Filter by ${name.toLowerCase()}` });
+    const items = await list
+      .locator(".ms-list > ul > li")
+      .evaluateAll((lis) =>
+        lis.map((li) => li.querySelector("label span")?.textContent?.trim() ?? ""),
+      );
+    await page.keyboard.press("Escape");
+    await expect(list).toBeHidden();
+    return items.sort();
+  };
+  if (NAMES.filter((_, n) => hasLogs(n)).length > 1) {
+    for (const [n, name] of NAMES.entries()) {
+      if (!hasLogs(n)) continue;
+      await filterTo({ Machines: [name] });
+      const tools = usedTools(n).map((t) => TOOL_NAMES[t] ?? t);
+      expect(await listed("Tools"), `${name}: tools`).toEqual(tools.sort());
+      if (families.size < 2) continue;
+      const own = new Set<string>();
+      for (const models of Object.values(expected[n]?.byToolModel ?? {})) {
+        for (const [model, t] of Object.entries(models)) {
+          if (allTokens(t) > 0) own.add(modelFamily(model).label);
+        }
+      }
+      expect(await listed("Models"), `${name}: model families`).toEqual([...own].sort());
+    }
+  }
+
   // The chart names every family; "Other models" is only for more than eight.
   await page.goto(`${DASHBOARD}/?range=all&by=model`);
   const legend = page.locator(".legend-item");

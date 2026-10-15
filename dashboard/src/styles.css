@@ -675,6 +675,17 @@ button.small,
   font-size: 0.8rem;
 }
 
+.ms-option.stale > span:first-of-type {
+  color: var(--muted);
+}
+
+.ms-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 6px 8px 2px;
+  max-width: 260px;
+}
+
 .ms-parent {
   display: flex;
   align-items: center;

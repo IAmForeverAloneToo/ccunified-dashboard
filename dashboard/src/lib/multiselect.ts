@@ -5,13 +5,17 @@
 //
 // Built on the browser's popover feature, like the date picker: it closes on
 // Escape or a click elsewhere, and focus returns to the button.
-import { h } from "./dom";
+import { fill, h } from "./dom";
 
 export interface Choice {
   id: string;
   label: string;
   /** Shown after the label, dimmed, such as "revoked". */
   note?: string;
+  /** Not listed, but still part of its parent (a model with no matching usage). */
+  hidden?: boolean;
+  /** Ticked, but with no matching usage: shown dimmed. */
+  stale?: boolean;
   children?: Choice[];
 }
 
@@ -72,6 +76,8 @@ export function multiSelect(opts: {
   label: string;
   /** The first checkbox, such as "All machines". */
   allLabel: string;
+  /** Shown when there's nothing to list. */
+  emptyText?: string;
   choices: () => Choice[];
   selected: () => Set<string>;
   /** Called on every change; `first` is true for the first change since the list opened. */
@@ -148,7 +154,7 @@ export function multiSelect(opts: {
     sync();
   }
 
-  const checkbox = (itemId: string, label: string, note?: string) => {
+  const checkbox = (itemId: string, label: string, note?: string, stale?: boolean) => {
     const box = h("input", {
       type: "checkbox",
       onchange: (e: Event) => change(itemId, (e.target as HTMLInputElement).checked),
@@ -157,7 +163,7 @@ export function multiSelect(opts: {
     else boxes.set(itemId, box);
     return h(
       "label",
-      { class: "ms-option" },
+      { class: stale ? "ms-option stale" : "ms-option" },
       box,
       h("span", null, label),
       note ? h("span", { class: "ms-note" }, note) : null,
@@ -168,14 +174,19 @@ export function multiSelect(opts: {
     choices = opts.choices();
     boxes.clear();
     const selected = opts.selected();
-    list.replaceChildren(
+    const shown = choices.filter((c) => !c.hidden);
+    fill(
+      list,
       checkbox("", opts.allLabel),
+      shown.length === 0
+        ? h("p", { class: "ms-empty" }, opts.emptyText ?? "Nothing to pick.")
+        : null,
       h(
         "ul",
-        { role: "list" },
-        choices.map((c) => {
-          const kids = c.children ?? [];
-          if (kids.length === 0) return h("li", null, checkbox(c.id, c.label, c.note));
+        { role: "list", hidden: shown.length === 0 },
+        shown.map((c) => {
+          const kids = (c.children ?? []).filter((k) => !k.hidden);
+          if (kids.length === 0) return h("li", null, checkbox(c.id, c.label, c.note, c.stale));
           if (kids.some((k) => selected.has(k.id))) expanded.add(c.id);
           const childList = h(
             "ul",
@@ -185,7 +196,7 @@ export function multiSelect(opts: {
               id: `${id}-${c.id}`,
               hidden: !expanded.has(c.id),
             },
-            kids.map((k) => h("li", null, checkbox(k.id, k.label, k.note))),
+            kids.map((k) => h("li", null, checkbox(k.id, k.label, k.note, k.stale))),
           );
           const expand = h(
             "button",
@@ -208,7 +219,7 @@ export function multiSelect(opts: {
           return h(
             "li",
             null,
-            h("div", { class: "ms-parent" }, checkbox(c.id, c.label, c.note), expand),
+            h("div", { class: "ms-parent" }, checkbox(c.id, c.label, c.note, c.stale), expand),
             childList,
           );
         }),

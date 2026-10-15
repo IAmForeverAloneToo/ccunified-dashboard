@@ -83,7 +83,7 @@ Click **Custom** next to the period buttons:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/filters-dark.png">
-  <img alt="The Models filter open under the period controls: model families with checkboxes, Kimi ticked, and Sonnet expanded to show its two models with only anthropic/claude-sonnet-5-5 ticked" src="images/filters-light.png">
+  <img alt="Machines set to Laptop, and the Models filter open under it: only the model families Laptop used (Haiku, Mythos, Opus, Sonnet and Gemini), with Gemini expanded and only gemini-3-pro ticked" src="images/filters-light.png">
 </picture>
 
 **Machines**, **Tools** and **Models**, under the period, limit everything on
@@ -95,11 +95,19 @@ picker's dots.
 - **Models** lists model families (Opus, GPT, Kimi, …). Ticking a family
   includes all of its models, also ones that show up later; click ▸ to pick
   exact models instead (the family then shows as partly ticked).
+- Each list offers only what was used, in the period shown, together with
+  what you ticked in the other two: with Machines *Laptop*, Tools and Models
+  list just Laptop's tools and models. A list isn't narrowed by its own ticks,
+  so you can still add more.
+- A tick that no longer matches anything (after a change of period, or of the
+  other filters) stays ticked, dimmed, with a note such as *no usage in this
+  period*, so it's clear why the page is empty. Untick it to drop it.
 - **Clear filters** turns them all off.
 - The address includes the filters, so they survive a reload and can be
   bookmarked or shared; **Back** undoes the changes made while a list was
   open.
-- Each list appears once there's more than one thing to pick from.
+- Each list appears once the period has more than one thing to pick from,
+  and stays however far the other filters narrow it.
 - With the keyboard: Tab to a list's button and press Enter, Tab between the
   checkboxes and press Space to tick, and Escape to close.
 

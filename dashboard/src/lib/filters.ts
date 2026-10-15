@@ -126,3 +126,45 @@ export function applyFilters(s: Summary, f: Filters): Summary {
     by_machine_source: [...machineSource.values()],
   };
 }
+
+/** What each filter list can offer. */
+export interface Available {
+  machines: Set<string>;
+  tools: Set<string>;
+  models: Set<string>;
+}
+
+/**
+ * What each list can offer: the machines, tools and models with usage in the
+ * period's rows that match the picks in the other two lists. A list's own
+ * picks don't narrow it, so several items can be ticked in one list. Null
+ * when the summary has no detail rows.
+ */
+export function available(s: Summary, f: Filters): Available | null {
+  const d = s.detail;
+  if (!d) return null;
+  const machines = new Set(f.machines);
+  const tools = new Set(f.tools);
+  const families = new Set(f.families);
+  const models = new Set(f.models);
+  const anyModel = families.size === 0 && models.size === 0;
+  const modelOk = new Map<string, boolean>();
+  const out: Available = { machines: new Set(), tools: new Set(), models: new Set() };
+  for (const [, mi, si, ki, input, output, write, read] of d.rows) {
+    if (input + output + write + read === 0) continue;
+    const machine = d.machines[mi] ?? "";
+    const tool = d.sources[si] ?? "";
+    const model = d.models[ki] ?? "";
+    const okMachine = machines.size === 0 || machines.has(machine);
+    const okTool = tools.size === 0 || tools.has(tool);
+    let okModel = modelOk.get(model);
+    if (okModel === undefined) {
+      okModel = anyModel || models.has(model) || families.has(modelFamily(model).id);
+      modelOk.set(model, okModel);
+    }
+    if (okTool && okModel) out.machines.add(machine);
+    if (okMachine && okModel) out.tools.add(tool);
+    if (okMachine && okTool) out.models.add(model);
+  }
+  return out;
+}

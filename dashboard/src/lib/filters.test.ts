@@ -3,6 +3,7 @@ import type { Summary } from "./api";
 import {
   allowedModels,
   applyFilters,
+  available,
   isFiltered,
   matcher,
   noFilters,
@@ -148,6 +149,22 @@ describe("the dropdown's ticks", () => {
     ]);
   });
 
+  test("ticking the only listed model doesn't pick models the list hides", () => {
+    const narrowed: Choice[] = [
+      {
+        id: "f:opus",
+        label: "Opus",
+        children: [
+          { id: "m:claude-opus-5-5", label: "claude-opus-5-5" },
+          { id: "m:claude-opus-4-5", label: "claude-opus-4-5", hidden: true },
+        ],
+      },
+    ];
+    expect([...toggle(new Set(), narrowed, "m:claude-opus-5-5", true)]).toEqual([
+      "m:claude-opus-5-5",
+    ]);
+  });
+
   test("ticking the last model of a family ticks the family", () => {
     expect(tick(["m:claude-opus-5-5"], "m:claude-opus-4-5")).toEqual(["f:opus"]);
     expect(tick([], "m:k3")).toEqual(["f:kimi"]);
@@ -160,5 +177,103 @@ describe("the dropdown's ticks", () => {
     expect(describeSelection(new Set(["f:kimi", "m:claude-opus-4-5", "x"]), choices)).toBe(
       "3 selected",
     );
+  });
+});
+
+describe("what each list offers", () => {
+  const rows = (...list: [string, string, string, number][]) => {
+    const machines = [...new Set(list.map((r) => r[0]))];
+    const sources = [...new Set(list.map((r) => r[1]))];
+    const models = [...new Set(list.map((r) => r[2]))];
+    return {
+      timezone: "UTC",
+      today: "2026-10-02",
+      from: "2026-10-01",
+      to: "2026-10-02",
+      tools: sources,
+      models,
+      by_day_machine: [],
+      by_day_model: [],
+      by_day_source: [],
+      by_machine_source: [],
+      detail: {
+        machines,
+        sources,
+        models,
+        rows: list.map(
+          ([m, t, k, n]) =>
+            [
+              "2026-10-01",
+              machines.indexOf(m),
+              sources.indexOf(t),
+              models.indexOf(k),
+              n,
+              0,
+              0,
+              0,
+              0,
+            ] as [string, number, number, number, number, number, number, number, number],
+        ),
+      },
+    } satisfies Summary;
+  };
+  // desk uses Claude Code (Opus) and Kimi; laptop uses Claude Code (Sonnet); idle has only empty rows.
+  const s = rows(
+    ["desk", "claude", "claude-opus-5-5", 10],
+    ["desk", "kimi", "k3", 5],
+    ["laptop", "claude", "claude-sonnet-5-5", 7],
+    ["idle", "codex", "gpt-5.5", 0],
+  );
+  const offer = (f: Partial<ReturnType<typeof noFilters>>) => {
+    const a = available(s, { ...noFilters(), ...f });
+    return {
+      machines: [...(a?.machines ?? [])].sort(),
+      tools: [...(a?.tools ?? [])].sort(),
+      models: [...(a?.models ?? [])].sort(),
+    };
+  };
+
+  test("with no picks, everything with usage in the period", () => {
+    expect(offer({})).toEqual({
+      machines: ["desk", "laptop"],
+      tools: ["claude", "kimi"],
+      models: ["claude-opus-5-5", "claude-sonnet-5-5", "k3"],
+    });
+  });
+
+  test("a machine narrows the tools and models, not the machines", () => {
+    expect(offer({ machines: ["laptop"] })).toEqual({
+      machines: ["desk", "laptop"],
+      tools: ["claude"],
+      models: ["claude-sonnet-5-5"],
+    });
+  });
+
+  test("a tool narrows the machines and models", () => {
+    expect(offer({ tools: ["kimi"] })).toEqual({
+      machines: ["desk"],
+      tools: ["claude", "kimi"],
+      models: ["k3"],
+    });
+  });
+
+  test("a model family narrows the machines and tools", () => {
+    expect(offer({ families: ["sonnet"] })).toEqual({
+      machines: ["laptop"],
+      tools: ["claude"],
+      models: ["claude-opus-5-5", "claude-sonnet-5-5", "k3"],
+    });
+  });
+
+  test("picks combine, whatever order they were made in", () => {
+    expect(offer({ machines: ["laptop"], tools: ["kimi"] })).toEqual({
+      machines: ["desk"],
+      tools: ["claude"],
+      models: [],
+    });
+  });
+
+  test("without detail rows, nothing is narrowed", () => {
+    expect(available({ ...s, detail: undefined }, noFilters())).toBeNull();
   });
 });
