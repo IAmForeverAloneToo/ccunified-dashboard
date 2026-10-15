@@ -120,6 +120,8 @@ interface PairingRow {
   sync_interval_minutes: number;
   expires_at: number;
   status: "pending" | "approved" | "denied" | "claimed";
+  department_id: string | null;
+  owner_id: string | null;
 }
 
 /** POST /agent/pair/poll — the machine asks whether it was approved yet. */
@@ -128,7 +130,8 @@ export async function pollPairing(c: Context<AppEnv>): Promise<Response> {
   const db = c.env.DB;
   const req = await db
     .prepare(
-      `SELECT id, machine_name, os, arch, agent_version, sync_interval_minutes, expires_at, status
+      `SELECT id, machine_name, os, arch, agent_version, sync_interval_minutes, expires_at, status,
+              department_id, owner_id
          FROM pairing_requests WHERE device_code_hash = ?1`,
     )
     .bind(await sha256Hex(body.device_code))
@@ -154,8 +157,9 @@ export async function pollPairing(c: Context<AppEnv>): Promise<Response> {
   await db.batch([
     db
       .prepare(
-        `INSERT INTO machines (id, name, os, arch, agent_version, sync_interval_minutes, token_hash, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        `INSERT INTO machines (id, name, os, arch, agent_version, sync_interval_minutes, token_hash,
+                               created_at, department_id, owner_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
       )
       .bind(
         machineId,
@@ -166,6 +170,8 @@ export async function pollPairing(c: Context<AppEnv>): Promise<Response> {
         req.sync_interval_minutes,
         await sha256Hex(token),
         now,
+        req.department_id,
+        req.owner_id,
       ),
     db.prepare("UPDATE pairing_requests SET machine_id = ?1 WHERE id = ?2").bind(machineId, req.id),
   ]);

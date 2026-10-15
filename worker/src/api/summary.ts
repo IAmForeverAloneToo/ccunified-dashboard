@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { z } from "zod";
+import { machineScopeSql, visibleMachines } from "../auth/access";
 import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { fail } from "../lib/http";
@@ -120,7 +121,10 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
   }
 
   const detail = query.data.detail === "1";
-  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}${all ? ":all" : ""}${detail ? ":detail2" : ""}"`;
+  // Only the machines this user can see; the validator changes with them.
+  const scope = await visibleMachines(c.env.DB, c.get("user"));
+  const params = (...p: unknown[]) => (scope.ids === null ? p : [...p, JSON.stringify(scope.ids)]);
+  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}:${scope.key}${all ? ":all" : ""}${detail ? ":detail2" : ""}"`;
   if (c.req.header("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { etag } });
   }
@@ -128,9 +132,10 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
   if (all) {
     // Starts at the first day with usage (one index lookup).
     const first = await c.env.DB.prepare(
-      "SELECT MIN(day) AS day FROM usage_daily WHERE day BETWEEN ?1 AND ?2",
+      `SELECT MIN(day) AS day FROM usage_daily
+        WHERE day BETWEEN ?1 AND ?2 ${machineScopeSql("machine_id", "?3", scope.ids)}`,
     )
-      .bind(from, to)
+      .bind(...params(from, to))
       .first<{ day: string | null }>();
     from = first?.day ?? to;
   }
@@ -142,16 +147,16 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
       ? `SELECT day, machine_id, source, model, input_tokens, output_tokens,
                 cache_creation_tokens, cache_read_tokens, cost_usd
            FROM usage_daily
-          WHERE day BETWEEN ?1 AND ?2
+          WHERE day BETWEEN ?1 AND ?2 ${machineScopeSql("machine_id", "?3", scope.ids)}
           ORDER BY day`
       : `SELECT ${BUCKET_START[bucket]} AS start, machine_id, source, model,
                 SUM(input_tokens), SUM(output_tokens), SUM(cache_creation_tokens),
                 SUM(cache_read_tokens), SUM(cost_usd)
            FROM usage_daily
-          WHERE day BETWEEN ?1 AND ?2
+          WHERE day BETWEEN ?1 AND ?2 ${machineScopeSql("machine_id", "?3", scope.ids)}
           GROUP BY start, machine_id, source, model`,
   )
-    .bind(from, to)
+    .bind(...params(from, to))
     .raw<UsageRow>();
 
   const head = {
@@ -256,8 +261,9 @@ export async function usageDays(c: Context<AppEnv>): Promise<Response> {
   const models = list(filters.data.model);
 
   const settings = await getSettings(c.env.DB);
+  const scope = await visibleMachines(c.env.DB, c.get("user"));
   const filterKey = await sha256Hex(JSON.stringify([machines, sources, models]));
-  const etag = `W/"days:${settings.dataVersion}:${settings.timezone}:${from}:${to}:${filterKey.slice(0, 16)}"`;
+  const etag = `W/"days:${settings.dataVersion}:${settings.timezone}:${from}:${to}:${filterKey.slice(0, 16)}:${scope.key}"`;
   if (c.req.header("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { etag } });
   }
@@ -269,9 +275,19 @@ export async function usageDays(c: Context<AppEnv>): Promise<Response> {
         AND (?3 IS NULL OR machine_id IN (SELECT value FROM json_each(?3)))
         AND (?4 IS NULL OR source IN (SELECT value FROM json_each(?4)))
         AND (?5 IS NULL OR model IN (SELECT value FROM json_each(?5)))
+        ${machineScopeSql("machine_id", "?6", scope.ids)}
       ORDER BY day`,
   )
-    .bind(from, to, machines, sources, models)
+    .bind(
+      ...[
+        from,
+        to,
+        machines,
+        sources,
+        models,
+        ...(scope.ids === null ? [] : [JSON.stringify(scope.ids)]),
+      ],
+    )
     .all<{ day: string }>();
   return c.json({ days: results.map((r) => r.day) }, 200, { etag });
 }

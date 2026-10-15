@@ -73,6 +73,7 @@ describe("access control", () => {
       id: viewer.id,
       username: "victor",
       role: "viewer",
+      departments: [],
       totp_enabled: false,
       must_change_password: false,
     });

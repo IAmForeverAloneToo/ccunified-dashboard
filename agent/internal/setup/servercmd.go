@@ -143,6 +143,15 @@ func serverUpdate(ctx context.Context, p *prompt.Prompter, factory CloudflareFac
 	return nil
 }
 
+// userLabel names a user and their dashboard-wide role, if any, for a list.
+func userLabel(u map[string]any) string {
+	role, _ := u["role"].(string)
+	if role == "" {
+		role = "department roles only"
+	}
+	return fmt.Sprintf("%v (%s)", u["username"], role)
+}
+
 // ServerResetPassword sets a new password for a dashboard user, for an admin who is locked out.
 func ServerResetPassword(ctx context.Context, p *prompt.Prompter, factory CloudflareFactory, username string) error {
 	inst, err := findInstallation(ctx, p, factory, "Resetting a password")
@@ -160,7 +169,7 @@ func ServerResetPassword(ctx context.Context, p *prompt.Prompter, factory Cloudf
 		}
 		names := make([]string, len(users))
 		for i, u := range users {
-			names[i] = fmt.Sprintf("%v (%v)", u["username"], u["role"])
+			names[i] = userLabel(u)
 		}
 		i, err := p.Choose("\nWhose password?", names, -1)
 		if err != nil {

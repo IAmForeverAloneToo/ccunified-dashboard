@@ -34,7 +34,7 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	if string(cf.uploaded) != "export default {}" || cf.uploadedDB != "old-db" || !cf.workersDevOff {
 		t.Fatalf("upload: %q to %s", cf.uploaded, cf.uploadedDB)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql, 0003_models.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql, 0003_models.sql, 0004_access.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	// It explains how to create the token, like setup does.
@@ -75,7 +75,7 @@ func TestServerUpdateFromTheFirstRelease(t *testing.T) {
 	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql, 0004_access.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	rows, err := cf.db.Query(ctx, "SELECT id, tools FROM machines ORDER BY id")
@@ -168,6 +168,21 @@ func TestServerUpdateRefusesToDowngrade(t *testing.T) {
 		setRunningVersion(t, running, nil)
 		if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
 			t.Fatalf("running %s: %v\n%s", running, err, out)
+		}
+	}
+}
+
+func TestUserLabel(t *testing.T) {
+	for _, c := range []struct {
+		user map[string]any
+		want string
+	}{
+		{map[string]any{"username": "alice", "role": "admin"}, "alice (admin)"},
+		{map[string]any{"username": "bob", "role": "viewer"}, "bob (viewer)"},
+		{map[string]any{"username": "carol", "role": nil}, "carol (department roles only)"},
+	} {
+		if got := userLabel(c.user); got != c.want {
+			t.Errorf("userLabel(%v) = %q, want %q", c.user, got, c.want)
 		}
 	}
 }

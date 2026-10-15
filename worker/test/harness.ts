@@ -48,14 +48,24 @@ export interface TestWorker {
   db: Awaited<ReturnType<Miniflare["getD1Database"]>>;
   fetch(path: string, init?: RequestInit & { cookie?: string }): Promise<Response>;
   sql(query: string, ...params: unknown[]): Promise<Record<string, unknown>[]>;
+  /** Applies one migration file, as `ccunified server update` would. */
+  migrate(file: string): Promise<void>;
   createUser(opts?: {
-    role?: "admin" | "viewer";
+    /** A dashboard-wide role (default admin), or null for none. */
+    role?: "admin" | "viewer" | null;
+    /** Roles in departments. */
+    departments?: { id: string; role: "manager" | "viewer" | "member" }[];
     username?: string;
     key?: string;
     mustChangePassword?: boolean;
   }): Promise<TestUser>;
   login(username: string, key: string, code?: string): Promise<Response>;
-  createMachine(opts?: { name?: string }): Promise<{ id: string; token: string }>;
+  createDepartment(name: string): Promise<string>;
+  createMachine(opts?: {
+    name?: string;
+    department?: string | null;
+    owner?: string | null;
+  }): Promise<{ id: string; token: string }>;
   dispose(): Promise<void>;
 }
 
@@ -65,7 +75,12 @@ export interface TestWorker {
  * other sites (such as GitHub); without it, those requests fail.
  */
 export async function startWorker(
-  options: { version?: string; outbound?: (request: Request) => Response | Promise<Response> } = {},
+  options: {
+    version?: string;
+    outbound?: (request: Request) => Response | Promise<Response>;
+    /** Apply only the migrations up to this file name (for testing a later one). */
+    migrateUntil?: string;
+  } = {},
 ): Promise<TestWorker> {
   const version = options.version ?? "test";
   let build: Promise<string>;
@@ -101,11 +116,15 @@ export async function startWorker(
   await mf.ready;
   const db = await mf.getD1Database("DB");
 
+  const migrate = async (file: string) => {
+    const statements = splitSql(readFileSync(join(migrationsDir, file), "utf8"));
+    await db.batch(statements.map((s) => db.prepare(s)));
+  };
   for (const file of readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort()) {
-    const statements = splitSql(readFileSync(join(migrationsDir, file), "utf8"));
-    await db.batch(statements.map((s) => db.prepare(s)));
+    if (options.migrateUntil && file > options.migrateUntil) break;
+    await migrate(file);
   }
 
   const worker: TestWorker = {
@@ -124,6 +143,7 @@ export async function startWorker(
       });
       return res as unknown as Response;
     },
+    migrate,
     async sql(query, ...params) {
       const { results } = await db
         .prepare(query)
@@ -147,7 +167,7 @@ export async function startWorker(
             id,
             username,
             serverHash(key),
-            opts.role ?? "admin",
+            opts.role === undefined ? "admin" : opts.role,
             opts.mustChangePassword ? 1 : 0,
             now,
           ),
@@ -156,8 +176,23 @@ export async function startWorker(
             "INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?3)",
           )
           .bind(sha256Hex(token), id, now, now + 86_400_000),
+        ...(opts.departments ?? []).map((d) =>
+          db
+            .prepare(
+              "INSERT INTO department_roles (department_id, user_id, role) VALUES (?1, ?2, ?3)",
+            )
+            .bind(d.id, id, d.role),
+        ),
       ]);
       return { id, username, key, cookie: `__Host-ccu_session=${token}` };
+    },
+    async createDepartment(name) {
+      const id = randomUUID();
+      await db
+        .prepare("INSERT INTO departments (id, name, created_at) VALUES (?1, ?2, ?3)")
+        .bind(id, name, Date.now())
+        .run();
+      return id;
     },
     login(username, key, code) {
       return worker.fetch(
@@ -175,6 +210,12 @@ export async function startWorker(
         )
         .bind(id, opts.name ?? `machine-${id.slice(0, 8)}`, sha256Hex(token), Date.now())
         .run();
+      if (opts.department || opts.owner) {
+        await db
+          .prepare("UPDATE machines SET department_id = ?1, owner_id = ?2 WHERE id = ?3")
+          .bind(opts.department ?? null, opts.owner ?? null, id)
+          .run();
+      }
       return { id, token };
     },
     dispose: () => mf.dispose(),

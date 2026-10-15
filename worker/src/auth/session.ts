@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import type { AppEnv, SessionUser } from "../env";
+import type { AppEnv, DashboardRole, DepartmentRole, SessionUser } from "../env";
 import { randomToken, sha256Hex } from "../lib/crypto";
 import { fail } from "../lib/http";
 
@@ -8,8 +8,6 @@ export const SESSION_COOKIE = "__Host-ccu_session";
 /** Sessions last 14 days from login, then a new login is required. */
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const TOUCH_EVERY_MS = 60 * 60 * 1000;
-
-const ROLE_RANK = { viewer: 1, admin: 2 } as const;
 
 /** Creates a session for a user and sets the session cookie. */
 export async function startSession(c: Context<AppEnv>, userId: string): Promise<void> {
@@ -46,7 +44,9 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
   const sessionHash = await sha256Hex(token);
   const now = Date.now();
   const row = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.role, u.totp_enabled, u.must_change_password, s.last_seen_at
+    `SELECT u.id, u.username, u.role, u.totp_enabled, u.must_change_password, s.last_seen_at,
+            (SELECT json_group_object(department_id, role) FROM department_roles
+              WHERE user_id = u.id) AS departments
        FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.id_hash = ?1 AND s.expires_at > ?2 AND u.disabled_at IS NULL`,
   )
@@ -54,7 +54,8 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
     .first<{
       id: string;
       username: string;
-      role: "admin" | "viewer";
+      role: DashboardRole | null;
+      departments: string;
       totp_enabled: number;
       must_change_password: number;
       last_seen_at: number;
@@ -71,6 +72,9 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
     id: row.id,
     username: row.username,
     role: row.role,
+    departments: new Map(
+      Object.entries(JSON.parse(row.departments) as Record<string, DepartmentRole>),
+    ),
     totpEnabled: row.totp_enabled === 1,
     mustChangePassword: row.must_change_password === 1,
     sessionHash,
@@ -78,12 +82,14 @@ export async function currentUser(c: Context<AppEnv>): Promise<SessionUser | und
 }
 
 /**
- * Requires a logged-in user with at least the given role. Users whose
- * password was set by an admin must choose their own before anything else,
+ * Requires a logged-in user: anyone ("user"), someone with a dashboard-wide
+ * role ("dashboard": admins and viewers), or an admin. What each person sees
+ * and manages within a route is decided by auth/access.ts. Users whose
+ * password was set for them must choose their own before anything else,
  * except on routes marked `beforePasswordChange`.
  */
 export function requireUser(
-  role: keyof typeof ROLE_RANK = "viewer",
+  level: "user" | "dashboard" | "admin" = "user",
   options: { beforePasswordChange?: boolean } = {},
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -92,7 +98,8 @@ export function requireUser(
     if (user.mustChangePassword && !options.beforePasswordChange) {
       fail(403, "password_change_required");
     }
-    if (ROLE_RANK[user.role] < ROLE_RANK[role]) fail(403, "forbidden");
+    if (level === "admin" && user.role !== "admin") fail(403, "forbidden");
+    if (level === "dashboard" && user.role === null) fail(403, "forbidden");
     c.set("user", user);
     await next();
   };
