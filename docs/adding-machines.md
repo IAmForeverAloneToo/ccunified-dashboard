@@ -1,7 +1,8 @@
 # Add machines
 
 Every machine after the first joins your existing dashboard. Joining doesn't
-need a Cloudflare token: the machine asks to join, and an admin approves it on
+need a Cloudflare token: the machine asks to join, and an admin (or a
+department's manager) approves it on
 the dashboard.
 
 ## Join a machine
@@ -39,11 +40,13 @@ the dashboard.
      └────────────────────────────┘
    ```
 
-4. **Approve it on the dashboard.** As an admin, from any device, open
-   **Approvals** (a badge on it shows how many machines are waiting). Type the
-   code; upper or lower case and the dash don't matter. Check that the waiting
-   machine's name and system are the ones you expect, optionally give it a
-   different name, then click **Approve**.
+4. **Approve it on the dashboard.** As an admin or a department's manager,
+   from any device, open **Approvals** (for admins, a badge on it shows how
+   many machines are waiting). Type the code; upper or lower case and the dash
+   don't matter. Optionally give it a different name, pick its **Department**
+   and **Owner** (managers approve into a department they manage), then click
+   **Approve**. Admins can check the waiting machine's name and system in the
+   list below the form.
 
 5. **The machine finishes on its own** within a few seconds: it saves its
    settings, sets up the background sync and uploads its usage history.
@@ -91,7 +94,9 @@ available**; run `ccunified update` on it.
 
 ## Rename a machine
 
-Admins can click **Rename** on the Machines page. Names must be unique among
+Admins, and managers for their departments' machines, can click **Edit** on
+the Machines page to rename a machine, move it to another department or change
+its owner. Names must be unique among
 active machines. The new name is used for all of the machine's usage,
 including its history.
 
@@ -101,7 +106,8 @@ There are two separate steps, and you usually want both:
 
 - **On the machine**, run `ccunified uninstall`. It removes the background
   sync, the machine's settings (including its upload key) and the program.
-- **On the dashboard**, an admin clicks **Revoke** on the Machines page. The
+- **On the dashboard**, an admin (or the manager of its department) clicks
+  **Revoke** on the Machines page. The
   machine's upload key stops working immediately. Its past usage stays on the
   dashboard and in the totals.
 

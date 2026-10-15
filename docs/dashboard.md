@@ -16,16 +16,40 @@ too many wrong passwords, logging in is blocked for a while (see
 
 ## Who can do what
 
-| | Viewer | Admin |
-|---|---|---|
-| See the overview and machines | ✓ | ✓ |
-| Change their own password and two-factor login | ✓ | ✓ |
-| Approve, rename and revoke machines | | ✓ |
-| Add and manage users | | ✓ |
-| Change the dashboard's time zone | | ✓ |
+People can have a role for the whole dashboard, roles in
+[departments](#departments-admins), or both.
 
-The server checks these rights on every request; they're not just hidden
-buttons.
+**Dashboard-wide roles:**
+
+- **Admin:** sees and manages everything: machines, users, departments and
+  settings.
+- **Viewer:** sees every machine's usage and the settings, and changes nothing.
+
+**Roles in a department** (a department groups machines and people, such as
+Engineering or Design):
+
+- **Manager:** sees the department's machines; approves machines into it;
+  renames, moves (between departments they manage) and revokes them; picks
+  their owners; and adds and manages its people (see [Users](#users)).
+- **Viewer:** sees the department's machines.
+- **Member:** can own machines in the department, and sees only the ones they
+  own.
+
+Everyone sees the machines they own, and a machine has at most one owner
+(none makes it shared). Someone with only department roles doesn't see the
+Settings page.
+
+| | Member | Department viewer | Manager | Viewer | Admin |
+|---|---|---|---|---|---|
+| See their own machines | ✓ | ✓ | ✓ | ✓ | ✓ |
+| See a department's machines | | ✓ | ✓ | ✓ (all) | ✓ (all) |
+| Approve, rename, move and revoke machines; pick owners | | | ✓ (their departments) | | ✓ |
+| Add and manage users | | | ✓ (see [Users](#users)) | | ✓ |
+| Manage departments and settings | | | | | ✓ |
+| Change their own password and two-factor login | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+The server checks these rights on every request, and only sends each person
+the usage of the machines they may see; they're not just hidden buttons.
 
 ## Overview
 
@@ -87,9 +111,11 @@ Click **Custom** next to the period buttons:
   <img alt="Machines set to Laptop, and the Models filter open under it: only the model families Laptop used (Haiku, Mythos, Opus, Sonnet and Gemini), with Gemini expanded and only gemini-3-pro ticked" src="images/filters-light.png">
 </picture>
 
-**Machines**, **Tools** and **Models**, under the period, limit everything on
-the page to what you tick: the totals, the chart, the tables and the date
-picker's dots.
+**Departments**, **Machines**, **Tools** and **Models**, under the period,
+limit everything on the page to what you tick: the totals, the chart, the
+tables and the date picker's dots. **Departments** appears once the machines
+you see belong to more than one department (machines without one count as
+*No department*); the chart can also be split by department.
 
 - Tick one or more; **All**, the default, turns that filter off. Filters
   combine: Tools *Kimi* with Machines *Home PC* shows Kimi's usage on Home PC.
@@ -97,7 +123,7 @@ picker's dots.
   includes all of its models, also ones that show up later; click ▸ to pick
   exact models instead (the family then shows as partly ticked).
 - Each list offers only what was used, in the period shown, together with
-  what you ticked in the other two: with Machines *Laptop*, Tools and Models
+  what you ticked in the others: with Machines *Laptop*, Tools and Models
   list just Laptop's tools and models. A list isn't narrowed by its own ticks,
   so you can still add more.
 - A tick that no longer matches anything (after a change of period, or of the
@@ -141,37 +167,61 @@ billed per token, so treat them as a measure of usage.
 
 ## Machines
 
-Every machine that uploads to the dashboard, with its status, last upload,
-operating system, the tools it has reported (once there's more than one),
-ccunified version, upload interval and 30-day token total.
-Admins can **Rename** and **Revoke** machines here. The *Add a machine* card
-shows the install commands and your dashboard's address. Machine statuses and
-removing machines are explained in [Add machines](adding-machines.md#machine-status).
+The machines you can see, with their department and owner (once there are
+departments or owners), status, last upload and upload interval, operating
+system, the tools they've reported (once there's more than one), ccunified
+version and 30-day token total. **Search** by name, owner, department or
+system, pick a **Department**, and click a column's name to sort by it; long
+lists come in pages of 50.
 
-## Approvals (admins)
+Admins, and managers for their departments' machines, can **Edit** a machine
+(its name, department and owner) and **Revoke** it. The owner is someone with
+a role in the machine's department; admins can give a machine without a
+department any owner. The *Add a machine* card shows the install commands and
+your dashboard's address. Machine statuses and removing machines are explained
+in [Add machines](adding-machines.md#machine-status).
 
-Machines waiting to join, with the name, system and time of each request.
-Type the code the machine shows to **Approve** or **Deny** it; see
-[Add machines](adding-machines.md#join-a-machine).
+## Approvals (admins and managers)
 
-## Users (admins)
+Type the code a new machine shows, pick its **Department** and **Owner**, and
+**Approve** or **Deny** it; see [Add machines](adding-machines.md#join-a-machine).
+Managers approve machines into a department they manage; admins may leave the
+department out. Only admins see the list of machines waiting to join.
+
+## Departments (admins)
+
+Add, rename and delete departments, and see how many machines and people each
+has. Deleting a department leaves its machines without a department (keeping
+their owners) and removes its people's roles in it. Give people roles on the
+[Users](#users) page, and put machines in a department when approving them or
+with **Edit** on the [Machines](#machines) page.
+
+## Users
+
+Admins manage everyone. Managers see the people with a role in the
+departments they manage, and manage the *plain* ones: people with no
+dashboard-wide role, a manager nowhere, and only in departments this manager
+manages. They can't make anyone an admin, a viewer of everything or a manager.
 
 - **Add a user:** choose a username (3–32 letters, digits, dots, dashes or
-  underscores; it can't be changed later), a role, and a temporary password.
-  Give them the password privately; they must choose their own when they first
-  log in.
-- **Make admin / Make viewer** changes their role and signs them out, so the
-  change applies at once.
+  underscores; it can't be changed later), their access, and a temporary
+  password. Give them the password privately; they must choose their own when
+  they first log in. Managers add people to their departments, as viewers or
+  members.
+- **Access…** changes someone's dashboard-wide role (admins) and their roles
+  in departments. Changing the dashboard-wide role signs them out, so it
+  applies at once. Someone who leaves a department stops owning its machines.
 - **Reset password** sets a new temporary password and signs them out
   everywhere.
 - **Reset two-factor** turns their two-factor login off, for when they've lost
   their authenticator and their recovery codes.
 - **Disable** blocks their login and signs them out, without deleting them;
-  **Enable** undoes it. **Delete** removes them for good.
+  **Enable** undoes it. **Delete** removes them for good; machines they owned
+  become shared.
 
 You manage your own account on the *Your account* page instead. There's
 always at least one active admin: the last one can't be disabled, deleted or
-made a viewer.
+lose the role.
 
 ## Your account
 
@@ -192,6 +242,8 @@ run `ccunified server reset-password` on any of your machines; see the
 [command reference](commands.md#ccunified-server-reset-password).
 
 ## Settings
+
+Admins and viewers of everything see this page.
 
 - **Days (admins):** the dashboard's time zone. Changing it regroups usage into
   the new zone's days: each machine notices on its next upload and uploads its

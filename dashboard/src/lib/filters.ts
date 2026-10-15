@@ -2,19 +2,36 @@ import type { DetailedSummary, Summary, Totals } from "./api";
 import { modelFamily } from "./models";
 
 /**
- * What the Overview is limited to. An empty list means "all". A model counts
- * if its family is in `families` or its exact name is in `models`.
+ * What the Overview is limited to. An empty list means "all". A machine
+ * counts if it's in `machines` and its department in `departments` (NO_DEPARTMENT
+ * for machines without one). A model counts if its family is in `families` or
+ * its exact name is in `models`.
  */
 export interface Filters {
+  departments: string[];
   machines: string[];
   tools: string[];
   families: string[];
   models: string[];
 }
 
-export const noFilters = (): Filters => ({ machines: [], tools: [], families: [], models: [] });
+/** Stands for "no department" in `departments`. */
+export const NO_DEPARTMENT = "none";
+
+/** A machine's department id, or NO_DEPARTMENT. */
+export type DepartmentOf = (machine: string) => string;
+const noDepartments: DepartmentOf = () => NO_DEPARTMENT;
+
+export const noFilters = (): Filters => ({
+  departments: [],
+  machines: [],
+  tools: [],
+  families: [],
+  models: [],
+});
 
 const PARAMS: [keyof Filters, string][] = [
+  ["departments", "department"],
   ["machines", "machine"],
   ["tools", "tool"],
   ["families", "family"],
@@ -39,16 +56,36 @@ export function writeFilters(query: URLSearchParams, f: Filters): void {
 export const isFiltered = (f: Filters) => PARAMS.some(([key]) => f[key].length > 0);
 
 /** Whether a row of usage passes the filters. */
-export function matcher(f: Filters): (machine: string, tool: string, model: string) => boolean {
+export function matcher(
+  f: Filters,
+  departmentOf: DepartmentOf = noDepartments,
+): (machine: string, tool: string, model: string) => boolean {
+  const departments = new Set(f.departments);
   const machines = new Set(f.machines);
   const tools = new Set(f.tools);
   const families = new Set(f.families);
   const models = new Set(f.models);
   const anyModel = families.size === 0 && models.size === 0;
   return (machine, tool, model) =>
+    (departments.size === 0 || departments.has(departmentOf(machine))) &&
     (machines.size === 0 || machines.has(machine)) &&
     (tools.size === 0 || tools.has(tool)) &&
     (anyModel || models.has(model) || families.has(modelFamily(model).id));
+}
+
+/**
+ * The machines the filters allow, out of the machines the dashboard knows,
+ * for asking the server; null if every machine is allowed.
+ */
+export function allowedMachines(
+  f: Filters,
+  known: string[],
+  departmentOf: DepartmentOf = noDepartments,
+): string[] | null {
+  if (f.departments.length === 0 && f.machines.length === 0) return null;
+  const departments = new Set(f.departments);
+  const picked = f.machines.length > 0 ? f.machines : known;
+  return picked.filter((m) => departments.size === 0 || departments.has(departmentOf(m)));
 }
 
 /**
@@ -57,7 +94,7 @@ export function matcher(f: Filters): (machine: string, tool: string, model: stri
  */
 export function allowedModels(f: Filters, known: string[]): string[] | null {
   if (f.families.length === 0 && f.models.length === 0) return null;
-  const ok = matcher({ ...f, machines: [], tools: [] });
+  const ok = matcher({ ...f, departments: [], machines: [], tools: [] });
   return [...new Set([...known.filter((m) => ok("", "", m)), ...f.models])];
 }
 
@@ -72,9 +109,13 @@ function emptyTotals(): Totals {
 }
 
 /** The totals of the rows that pass the filters. */
-export function applyFilters(s: DetailedSummary, f: Filters): Summary {
+export function applyFilters(
+  s: DetailedSummary,
+  f: Filters,
+  departmentOf: DepartmentOf = noDepartments,
+): Summary {
   const d = s.detail;
-  const ok = matcher(f);
+  const ok = matcher(f, departmentOf);
   const byMachine = new Map<string, Totals & { day: string; machine_id: string }>();
   const byModel = new Map<string, Totals & { day: string; model: string }>();
   const bySource = new Map<string, Totals & { day: string; source: string }>();
@@ -132,30 +173,43 @@ export function applyFilters(s: DetailedSummary, f: Filters): Summary {
 
 /** What each filter list can offer. */
 export interface Available {
+  departments: Set<string>;
   machines: Set<string>;
   tools: Set<string>;
   models: Set<string>;
 }
 
 /**
- * What each list can offer: the machines, tools and models with usage in the
- * period's rows that match the picks in the other two lists. A list's own
- * picks don't narrow it, so several items can be ticked in one list.
+ * What each list can offer: the departments, machines, tools and models with
+ * usage in the period's rows that match the picks in the other lists. A
+ * list's own picks don't narrow it, so several items can be ticked in one list.
  */
-export function available(s: DetailedSummary, f: Filters): Available {
+export function available(
+  s: DetailedSummary,
+  f: Filters,
+  departmentOf: DepartmentOf = noDepartments,
+): Available {
   const d = s.detail;
+  const departments = new Set(f.departments);
   const machines = new Set(f.machines);
   const tools = new Set(f.tools);
   const families = new Set(f.families);
   const models = new Set(f.models);
   const anyModel = families.size === 0 && models.size === 0;
   const modelOk = new Map<string, boolean>();
-  const out: Available = { machines: new Set(), tools: new Set(), models: new Set() };
+  const out: Available = {
+    departments: new Set(),
+    machines: new Set(),
+    tools: new Set(),
+    models: new Set(),
+  };
   for (const [, mi, si, ki, input, output, write, read] of d.rows) {
     if (input + output + write + read === 0) continue;
     const machine = d.machines[mi] ?? "";
     const tool = d.sources[si] ?? "";
     const model = d.models[ki] ?? "";
+    const department = departmentOf(machine);
+    const okDepartment = departments.size === 0 || departments.has(department);
     const okMachine = machines.size === 0 || machines.has(machine);
     const okTool = tools.size === 0 || tools.has(tool);
     let okModel = modelOk.get(model);
@@ -163,9 +217,10 @@ export function available(s: DetailedSummary, f: Filters): Available {
       okModel = anyModel || models.has(model) || families.has(modelFamily(model).id);
       modelOk.set(model, okModel);
     }
-    if (okTool && okModel) out.machines.add(machine);
-    if (okMachine && okModel) out.tools.add(tool);
-    if (okMachine && okTool) out.models.add(model);
+    if (okMachine && okTool && okModel) out.departments.add(department);
+    if (okDepartment && okTool && okModel) out.machines.add(machine);
+    if (okDepartment && okMachine && okModel) out.tools.add(tool);
+    if (okDepartment && okMachine && okTool) out.models.add(model);
   }
   return out;
 }

@@ -178,14 +178,21 @@ learns of a release as soon as a machine uploads while running it.
 | `GET /api/login-params`, `POST /api/login`, `POST /api/logout` | Log in (with the salt the browser needs to derive the login key) and out | anyone |
 | `GET /api/me`, `POST /api/me/password` | Who's logged in; change your password | any user |
 | `POST /api/me/2fa/setup`, `…/enable`, `…/disable`, `…/recovery-codes` | Two-factor login | any user |
-| `GET /api/summary?days=N`, `?from=&to=` or `?all=1` | Usage per day by machine, by model and by tool, and each machine's usage per tool; `all=1` starts at the first day with usage. With `detail=1`, the rows themselves instead (day, machine, tool, model), which the Overview totals and filters in the browser; over 92 days they are summed per week, and over two years per month, as the chart shows them | viewer |
-| `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker), optionally only for some machines, tools and models (repeated `machine`, `source`, `model`) | viewer |
-| `GET /api/machines` | Machines, their status and the tools each has reported | viewer |
-| `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
-| `GET /api/pairing`, `POST /api/pairing/approve`, `POST /api/pairing/deny` | Machines waiting to join | admin |
-| `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users | admin |
-| `GET /api/settings` / `PATCH /api/settings` | Read the settings and update status / change the time zone | viewer / admin |
-| `POST /api/settings/check-updates` | Ask GitHub for the newest release now | viewer |
+| `GET /api/summary?days=N`, `?from=&to=` or `?all=1` | Usage per day by machine, by model and by tool, and each machine's usage per tool; `all=1` starts at the first day with usage. With `detail=1`, the rows themselves instead (day, machine, tool, model), which the Overview totals and filters in the browser; over 92 days they are summed per week, and over two years per month, as the chart shows them | any user, for the machines they see |
+| `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker), optionally only for some machines, tools and models (repeated `machine`, `source`, `model`) | any user, for the machines they see |
+| `GET /api/machines` | The machines the user sees: status, tools, department, owner, and whether the user manages each | any user |
+| `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, move to another department, change the owner; revoke | admin; manager of its department |
+| `GET /api/departments` | Departments with their numbers of machines and people (all, or those the user has a role or a machine in) | any user |
+| `POST /api/departments`, `PATCH/DELETE /api/departments/:id` | Add, rename, delete departments | admin |
+| `GET /api/pairing` | Machines waiting to join | admin |
+| `POST /api/pairing/approve`, `POST /api/pairing/deny` | Approve (with a department and owner) or deny a code | admin; manager, into their departments |
+| `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users and their roles | admin; manager, for the plain users of their departments |
+| `GET /api/settings` / `PATCH /api/settings` | Read the settings and update status / change the time zone | admin or viewer / admin |
+| `POST /api/settings/check-updates` | Ask GitHub for the newest release now | admin or viewer |
+
+Who sees and manages what is decided in the Worker
+([`auth/access.ts`](../worker/src/auth/access.ts)), so each person only ever
+receives the rows they may see.
 
 `GET /healthz` answers `{"ok":true,"version":"…","schema_versions":[1,2]}`
 without a login. Every other path serves the dashboard's pages.
@@ -195,12 +202,14 @@ without a login. Every other path serves the dashboard's pages.
 | Table | Holds |
 |---|---|
 | `settings` | Time zone, a random install ID (part of the password salt), the latest known release and the outcome of the last check for one, and every tool and every model seen so far in the order each first appeared (the order of their chart colors) |
-| `users` | Username, role (admin or viewer), password hash, two-factor secret, whether a new password is required, status |
+| `users` | Username, dashboard-wide role (admin, viewer or none), password hash, two-factor secret, whether a new password is required, status |
+| `departments` | Name |
+| `department_roles` | Each person's role in a department: manager, viewer or member |
 | `recovery_codes` | Two-factor recovery codes, as hashes |
 | `sessions` | Login sessions, as hashes of their tokens |
 | `login_attempts` | Failed-login counters for rate limiting |
-| `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time, the tools it has reported |
-| `pairing_requests` | Machines waiting to join, and the outcome of each request |
+| `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time, the tools it has reported, department and owner |
+| `pairing_requests` | Machines waiting to join, and the outcome of each request (with the department and owner picked when approving) |
 | `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost |
 
 All tables are SQLite `STRICT` tables, created by the migrations in

@@ -13,6 +13,7 @@ import { fail, readJson } from "../lib/http";
 import { compareVersions } from "../lib/semver";
 import { getSettings, parseList } from "../lib/settings";
 import { latestVersion } from "../lib/updates";
+import { SOURCE_REPO } from "../version";
 
 /** Machine names: 1–64 printable characters, no control characters. */
 export const MachineName = z
@@ -77,6 +78,8 @@ export async function listMachines(c: Context<AppEnv>): Promise<Response> {
   const now = Date.now();
   return c.json({
     latest_version: latest,
+    /** Where releases come from, for the install commands. */
+    source_repo: SOURCE_REPO,
     machines: results.map(({ department_name, owner_username, ...m }) => ({
       ...m,
       tools: parseList(m.tools),

@@ -1,6 +1,8 @@
+import { seesAll } from "../lib/access";
 import {
   api,
   type Bucket,
+  type Department,
   type DetailedSummary,
   getCached,
   type Machine,
@@ -14,11 +16,14 @@ import { rangePicker } from "../lib/daterange";
 import { daysInclusive, formatRange, isDate, MAX_RANGE_DAYS } from "../lib/dates";
 import { type Child, fill, h, s, segmented } from "../lib/dom";
 import {
+  allowedMachines,
   allowedModels,
   applyFilters,
   available,
+  type DepartmentOf,
   type Filters,
   isFiltered,
+  NO_DEPARTMENT,
   noFilters,
   readFilters,
   writeFilters,
@@ -26,14 +31,14 @@ import {
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
 import { familySeries, modelFamily } from "../lib/models";
 import { type Choice, type MultiSelect, multiSelect } from "../lib/multiselect";
-import { seriesOf } from "../lib/series";
+import { seriesOf, stableSeries } from "../lib/series";
 import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
 
 type RangeKey = "1" | "7" | "30" | "90" | "365" | "all";
 /** A preset, or "custom" for dates picked in the calendar. */
 type Period = RangeKey | "custom";
-type SplitKey = "machine" | "model" | "tool";
+type SplitKey = "machine" | "department" | "model" | "tool";
 type MeasureKey = "tokens" | "output" | "cost";
 
 const RANGES: [RangeKey, string][] = [
@@ -46,6 +51,7 @@ const RANGES: [RangeKey, string][] = [
 ];
 const SPLITS: [SplitKey, string][] = [
   ["machine", "Machine"],
+  ["department", "Department"],
   ["model", "Model"],
   ["tool", "Tool"],
 ];
@@ -60,7 +66,7 @@ const MEASURE_TITLE: Record<MeasureKey, string> = {
   cost: "estimated cost",
 };
 
-/** The longest range the API serves (about ten years). */
+/** How often the page refreshes: every minute, or every 10 minutes beyond 92 days. */
 const REFRESH_MS = 60_000;
 const LONG_REFRESH_MS = 10 * 60_000;
 
@@ -234,6 +240,11 @@ export async function overviewPage(ctx: PageContext) {
     .querySelector<HTMLInputElement>('input[value="tool"]')
     ?.closest("label");
   if (toolOption) toolOption.hidden = state.split !== "tool";
+  // "Department" too, once machines in the period belong to more than one.
+  const departmentOption = splitFilter
+    .querySelector<HTMLInputElement>('input[value="department"]')
+    ?.closest("label");
+  if (departmentOption) departmentOption.hidden = state.split !== "department";
   const filters = h(
     "div",
     { class: "filters", role: "group", "aria-label": "Filters" },
@@ -275,7 +286,21 @@ export async function overviewPage(ctx: PageContext) {
   /** When the data was last asked for. */
   let loadedAt = 0;
   let machines: Machine[] = [];
+  let machineById = new Map<string, Machine>();
   let pending: PairingRequest[] = [];
+  /** Every department the user can see, oldest first (for their colors). */
+  let departments: Department[] = [];
+
+  const departmentOf: DepartmentOf = (id) => machineById.get(id)?.department?.id ?? NO_DEPARTMENT;
+  const departmentName = (id: string) =>
+    id === NO_DEPARTMENT
+      ? "No department"
+      : (machines.find((m) => m.department?.id === id)?.department?.name ??
+        departments.find((d) => d.id === id)?.name ??
+        "Unknown department");
+  /** The departments of the machines with usage in the period. */
+  const departmentsInPeriod = () =>
+    new Set((summary?.detail.machines ?? []).map((m) => departmentOf(m)));
 
   // ---------- Filters: limit everything to some machines, tools and models ----------
 
@@ -289,7 +314,7 @@ export async function overviewPage(ctx: PageContext) {
   // Each list offers only what was used, in the period shown, together with
   // the picks in the other lists. Picks that no longer match stay listed,
   // ticked and marked, so it's clear why the page is empty.
-  const offered = () => (summary ? available(summary, state.filters) : null);
+  const offered = () => (summary ? available(summary, state.filters, departmentOf) : null);
   const staleNote = (othersFiltered: boolean) =>
     othersFiltered ? "no usage with your other filters" : "no usage in this period";
   const notes = (...parts: (string | false)[]) => parts.filter(Boolean).join(" · ") || undefined;
@@ -301,6 +326,37 @@ export async function overviewPage(ctx: PageContext) {
     draw();
   }
 
+  const departmentSelect = multiSelect({
+    label: "Departments",
+    allLabel: "All departments",
+    emptyText: nothingLeft,
+    choices: () => {
+      const f = state.filters;
+      const ok = offered()?.departments;
+      const others = f.machines.length + f.tools.length + f.families.length + f.models.length > 0;
+      const ids = [...new Set([...machines.map((m) => departmentOf(m.id)), ...f.departments])];
+      return ids
+        .filter((id) => !ok || ok.has(id) || f.departments.includes(id))
+        .sort((a, b) =>
+          a === NO_DEPARTMENT
+            ? 1
+            : b === NO_DEPARTMENT
+              ? -1
+              : departmentName(a).localeCompare(departmentName(b)),
+        )
+        .map((id) => {
+          const stale = ok !== undefined && !ok.has(id);
+          return {
+            id,
+            label: departmentName(id),
+            stale,
+            note: notes(stale && staleNote(others)),
+          };
+        });
+    },
+    selected: () => new Set(state.filters.departments),
+    onChange: (next, first) => setFilters({ departments: [...next] }, first),
+  });
   const machineSelect = multiSelect({
     label: "Machines",
     allLabel: "All machines",
@@ -308,7 +364,8 @@ export async function overviewPage(ctx: PageContext) {
     choices: () => {
       const f = state.filters;
       const ok = offered()?.machines;
-      const others = f.tools.length + f.families.length + f.models.length > 0;
+      const others =
+        f.departments.length + f.tools.length + f.families.length + f.models.length > 0;
       return machines
         .filter((m) => !ok || ok.has(m.id) || f.machines.includes(m.id))
         .map((m) => {
@@ -331,7 +388,8 @@ export async function overviewPage(ctx: PageContext) {
     choices: () => {
       const f = state.filters;
       const ok = offered()?.tools;
-      const others = f.machines.length + f.families.length + f.models.length > 0;
+      const others =
+        f.departments.length + f.machines.length + f.families.length + f.models.length > 0;
       return knownTools()
         .filter((id) => !ok || ok.has(id) || f.tools.includes(id))
         .map((id) => {
@@ -350,7 +408,7 @@ export async function overviewPage(ctx: PageContext) {
     choices: () => {
       const f = state.filters;
       const ok = offered()?.models;
-      const note = staleNote(f.machines.length + f.tools.length > 0);
+      const note = staleNote(f.departments.length + f.machines.length + f.tools.length > 0);
       // Every known model stays in its family (so ticking all of a family's
       // listed models doesn't pick models that are only hidden); the ones
       // with no matching usage are hidden.
@@ -397,7 +455,7 @@ export async function overviewPage(ctx: PageContext) {
       setFilters({ families: picked("f:"), models: picked("m:") }, first);
     },
   });
-  const selects: MultiSelect[] = [machineSelect, toolSelect, modelSelect];
+  const selects: MultiSelect[] = [departmentSelect, machineSelect, toolSelect, modelSelect];
   const clearFilters = h(
     "button",
     {
@@ -405,12 +463,20 @@ export async function overviewPage(ctx: PageContext) {
       class: "small",
       onclick: () => {
         setFilters(noFilters(), true);
-        machineSelect.element.querySelector("button")?.focus();
+        (departmentSelect.element.hidden ? machineSelect : departmentSelect).element
+          .querySelector("button")
+          ?.focus();
       },
     },
     "Clear filters",
   );
-  limits.append(machineSelect.element, toolSelect.element, modelSelect.element, clearFilters);
+  limits.append(
+    departmentSelect.element,
+    machineSelect.element,
+    toolSelect.element,
+    modelSelect.element,
+    clearFilters,
+  );
 
   /** Shows the dropdowns that have something to choose from, and Clear when any filter is on. */
   function paintLimits() {
@@ -418,6 +484,7 @@ export async function overviewPage(ctx: PageContext) {
     // A list appears once the period has more than one of its kind, and stays
     // however far the other filters narrow it.
     const d = summary?.detail;
+    departmentSelect.element.hidden = departmentsInPeriod().size < 2 && f.departments.length === 0;
     machineSelect.element.hidden =
       (d ? d.machines.length : machines.length) < 2 && f.machines.length === 0;
     toolSelect.element.hidden =
@@ -497,7 +564,13 @@ export async function overviewPage(ctx: PageContext) {
     usageDays: (from, to) => {
       // The dots follow the filters too.
       const q = new URLSearchParams({ from, to });
-      for (const m of state.filters.machines) q.append("machine", m);
+      const allowed = allowedMachines(
+        state.filters,
+        machines.map((m) => m.id),
+        departmentOf,
+      );
+      // No machine at all: ask about one that can't exist, for no days.
+      for (const m of allowed?.length === 0 ? ["-"] : (allowed ?? [])) q.append("machine", m);
       for (const t of state.filters.tools) q.append("source", t);
       for (const m of allowedModels(state.filters, knownModels()) ?? []) q.append("model", m);
       return getCached<{ days: string[] }>(`/usage-days?${q}`).then((r) => r.days);
@@ -525,7 +598,16 @@ export async function overviewPage(ctx: PageContext) {
       ]);
       summary = s;
       machines = m.machines;
+      machineById = new Map(machines.map((x) => [x.id, x]));
       pending = p;
+      // Departments are read again only when a machine is in one not seen yet.
+      const missing = machines.some(
+        (x) => x.department && !departments.some((d) => d.id === x.department?.id),
+      );
+      if (missing) {
+        departments = (await api<{ departments: Department[] }>("/departments")).departments;
+        departments.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+      }
       draw();
     } finally {
       chartBox.classList.remove("loading");
@@ -536,7 +618,7 @@ export async function overviewPage(ctx: PageContext) {
     paintLimits();
     if (!summary) return;
     const all = summary;
-    const s = applyFilters(all, state.filters);
+    const s = applyFilters(all, state.filters, departmentOf);
     const tzNote = document.querySelector("#tz-note");
     if (tzNote) {
       const period =
@@ -545,6 +627,9 @@ export async function overviewPage(ctx: PageContext) {
     }
     const multiTool = knownTools().length > 1;
     if (toolOption) toolOption.hidden = !multiTool && state.split !== "tool";
+    if (departmentOption) {
+      departmentOption.hidden = departmentsInPeriod().size < 2 && state.split !== "department";
+    }
     toolsCard.hidden = !multiTool;
     drawBanners();
     drawTiles(s, multiTool);
@@ -595,10 +680,12 @@ export async function overviewPage(ctx: PageContext) {
   function drawTiles(s: Summary, multiTool: boolean) {
     const total = emptyTotals();
     for (const r of s.by_day_machine) addInto(total, r);
+    const f = state.filters;
     const active = machines.filter(
       (m) =>
         m.revoked_at === null &&
-        (state.filters.machines.length === 0 || state.filters.machines.includes(m.id)),
+        (f.machines.length === 0 || f.machines.includes(m.id)) &&
+        (f.departments.length === 0 || f.departments.includes(departmentOf(m.id))),
     );
     const ok = active.filter((m) => m.status === "ok").length;
     const late = active.filter((m) => m.status === "late").length;
@@ -645,6 +732,19 @@ export async function overviewPage(ctx: PageContext) {
       }
       return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? "other" };
     }
+    if (state.split === "department") {
+      const seen = s.by_day_machine.map((r) => departmentOf(r.machine_id));
+      const map = stableSeries(
+        [...departments.map((d) => d.id), NO_DEPARTMENT],
+        seen,
+        departmentName,
+        "Other departments",
+      );
+      return {
+        series: seriesOf(map, seen),
+        keyOf: (r) => map.get(departmentOf(String(r.machine_id)))?.id ?? "other",
+      };
+    }
     if (state.split === "tool") {
       const sources = s.by_day_source.map((r) => r.source);
       const map = toolSeries(s.tools, sources);
@@ -666,7 +766,7 @@ export async function overviewPage(ctx: PageContext) {
     const bucket = s.bucket ?? "day";
     const { series, keyOf } = seriesFor(s);
     const rows =
-      state.split === "machine"
+      state.split === "machine" || state.split === "department"
         ? s.by_day_machine
         : state.split === "tool"
           ? s.by_day_source
@@ -704,11 +804,24 @@ export async function overviewPage(ctx: PageContext) {
           "div",
           { class: "empty" },
           machines.length === 0
-            ? [
-                h("strong", null, "No machines yet"),
-                h("span", null, "Install ccunified on a machine and approve it to see usage here."),
-                h("a", { href: "/machines" }, "How to add a machine"),
-              ]
+            ? seesAll(ctx.me)
+              ? [
+                  h("strong", null, "No machines yet"),
+                  h(
+                    "span",
+                    null,
+                    "Install ccunified on a machine and approve it to see usage here.",
+                  ),
+                  h("a", { href: "/machines" }, "How to add a machine"),
+                ]
+              : [
+                  h("strong", null, "No machines to show yet"),
+                  h(
+                    "span",
+                    null,
+                    "You see the machines you own and those of the departments you manage or view. Ask an admin or your manager if one is missing.",
+                  ),
+                ]
             : isFiltered(state.filters)
               ? [
                   h("strong", null, "Nothing matches these filters in this period"),
@@ -953,7 +1066,7 @@ export async function overviewPage(ctx: PageContext) {
   const resize = new ResizeObserver(() => {
     if (chartBox.clientWidth !== lastWidth && summary && !state.tableView) {
       lastWidth = chartBox.clientWidth;
-      drawChart(applyFilters(summary, state.filters));
+      drawChart(applyFilters(summary, state.filters, departmentOf));
     }
   });
   resize.observe(chartBox);

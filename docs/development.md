@@ -47,6 +47,8 @@ npm test               # Worker tests, inside workerd
 npm run build          # build the dashboard and bundle the Worker
 npm run check          # all of the above, plus the Go checks and tests
 npm run demo           # the dashboard with demo data at http://localhost:8787
+                       # (log in as demo, sam, morgan, riley, jordan or casey;
+                       # the password is "<name>-password")
 npm run test:browser   # dashboard tests in Chrome and Firefox
 npm run rehearsal      # the full rehearsal (Linux)
 ```

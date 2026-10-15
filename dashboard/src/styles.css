@@ -1508,3 +1508,108 @@ dialog::backdrop {
     flex: 1;
   }
 }
+
+/* ---------- Lists with a search, sortable columns and pages ---------- */
+
+.list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.list-tools input[type="search"] {
+  flex: 1 1 260px;
+  width: auto;
+}
+
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+label.inline select {
+  width: auto;
+}
+
+th button.sort {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  border-radius: 4px;
+}
+
+th button.sort:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sort-arrow {
+  font-size: 0.7em;
+  color: var(--muted);
+  min-width: 1em;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------- Choosing someone's access ---------- */
+
+.access-departments {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px 12px;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.access-departments legend {
+  font-weight: 550;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+
+.access-row {
+  display: grid;
+  grid-template-columns: minmax(8em, 1fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 12px;
+  font-weight: 400;
+}
+
+@media (max-width: 640px) {
+  .access-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+/* A second, quieter line in a table cell, such as a machine's system. */
+th .sub,
+td .sub {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+td.wrap {
+  white-space: normal;
+  min-width: 9em;
+}
+
+.row.nowrap {
+  flex-wrap: nowrap;
+}

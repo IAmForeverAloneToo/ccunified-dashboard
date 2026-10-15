@@ -66,9 +66,11 @@ at your own subdomain.
 ## Approving new machines
 
 - A joining machine gets an **8-character code** (about 40 bits), valid for
-  **10 minutes**. Only an admin can approve it.
-- The Approvals page shows each waiting machine's name, system and request
-  time, so you can check you're approving the machine in front of you.
+  **10 minutes**. Only an admin, or a manager approving into their own
+  department, can approve it.
+- The Approvals page shows admins each waiting machine's name, system and
+  request time, so you can check you're approving the machine in front of
+  you. Managers don't see the list; they approve the code they were given.
 - The code alone isn't enough to get the key: the machine collects its key with
   a separate secret it never shows, which the dashboard stores only as a hash.
 - At most 20 requests can wait at once, and each network can start 5 every 10
@@ -95,15 +97,20 @@ at your own subdomain.
   only sent over HTTPS and that isn't sent with requests from other sites. The
   dashboard stores only a hash of it.
 - A session lasts at most **14 days**. Logging out ends it. Changing your
-  password ends your other sessions, and an admin disabling you, resetting your
-  password or changing your role ends all of them, immediately.
+  password ends your other sessions, and an admin or your manager disabling
+  you or resetting your password, or an admin changing your dashboard-wide
+  role, ends all of them, immediately. A change to your department roles
+  applies from your next request.
 - **Failed logins are limited** to 10 per username and 50 per network in 15
   minutes. Unknown usernames take as long to check as real ones, so they can't
   be told apart.
 - **Two-factor login** (optional per user) uses standard 6-digit authenticator
   codes (RFC 6238). A code can't be used twice. The 10 recovery codes work once
   each and are stored only as hashes.
-- **Roles** (admin and viewer) are checked by the server on every request.
+- **Roles** (dashboard-wide admin and viewer, and manager, viewer and member
+  of a department) are checked by the server on every request, and the server
+  only sends each person the usage, machines and people they may see; see
+  [Who can do what](dashboard.md#who-can-do-what).
 - Requests that change anything must come from the dashboard's own pages.
 
 ## Browser protections

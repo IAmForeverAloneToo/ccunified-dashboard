@@ -37,10 +37,11 @@ const compactFmt = new Intl.NumberFormat("en-US", {
 const compact = (n: number) =>
   Math.abs(n) < 1000 ? new Intl.NumberFormat("en-US").format(n) : compactFmt.format(n);
 
-async function logIn(page: Page) {
+/** Logs in as a demo user (see worker/scripts/demo.mjs); "demo" is the admin. */
+async function logIn(page: Page, username = "demo") {
   await page.goto(new URL("/login", demo.url).href);
-  await page.getByLabel("Username").fill("demo");
-  await page.getByLabel("Password").fill("demo-password");
+  await page.getByLabel("Username").fill(username);
+  await page.getByLabel("Password").fill(`${username}-password`);
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 }
@@ -846,5 +847,215 @@ test.describe("filters", () => {
     await page.locator(".empty").getByRole("button", { name: "Clear filters" }).click();
     await expect(filterButton(page, "Tools")).toHaveText(/All/);
     await expect(page.locator(".legend-item").first()).toBeVisible();
+  });
+});
+
+test.describe("access control", () => {
+  /** Tokens per machine name in the last 30 days, as the admin sees them. */
+  async function tokensByMachine(page: Page): Promise<Record<string, number>> {
+    return page.evaluate(async () => {
+      const [s, m] = await Promise.all([
+        fetch("/api/summary?days=30").then((r) => r.json()),
+        fetch("/api/machines").then((r) => r.json()),
+      ]);
+      const names = Object.fromEntries(
+        m.machines.map((x: { id: string; name: string }) => [x.id, x.name]),
+      );
+      const out: Record<string, number> = {};
+      for (const r of s.by_day_machine) {
+        const name = names[r.machine_id] as string;
+        out[name] =
+          (out[name] ?? 0) +
+          r.input_tokens +
+          r.output_tokens +
+          r.cache_creation_tokens +
+          r.cache_read_tokens;
+      }
+      return out;
+    });
+  }
+  const navLinks = (page: Page) =>
+    page.getByRole("navigation", { name: "Main" }).getByRole("link").allInnerTexts();
+  const machineNames = async (page: Page) => {
+    await page.goto(new URL("/machines", demo.url).href);
+    await expect(page.locator("tbody tr").first()).toBeVisible();
+    return (await page.locator("tbody th .name-cell").allInnerTexts()).map((t) => t.trim()).sort();
+  };
+
+  const roles: [string, string[], string[]][] = [
+    [
+      "sam",
+      ["Overview", "Machines", "Settings"],
+      ["Build server", "Home PC", "Laptop", "Office PC"],
+    ],
+    ["morgan", ["Overview", "Machines", "Approvals", "Users"], ["Build server", "Office PC"]],
+    ["riley", ["Overview", "Machines"], ["Office PC"]],
+    ["casey", ["Overview", "Machines"], ["Laptop"]],
+  ];
+  for (const [user, nav, machines] of roles) {
+    test(`${user} sees only their pages and machines`, async ({ page }) => {
+      await logIn(page);
+      const all = await tokensByMachine(page);
+      await page.getByRole("button", { name: "Log out" }).click();
+      await logIn(page, user);
+      expect(await navLinks(page)).toEqual(nav);
+      const want = machines.reduce((n, m) => n + (all[m] ?? 0), 0);
+      await expect(tile(page, "Tokens")).toHaveText(compact(want));
+      await expect(tile(page, "Machines reporting")).toHaveText(
+        new RegExp(`of ${machines.length}$`),
+      );
+      expect(await machineNames(page)).toEqual(machines);
+      if (!nav.includes("Settings")) {
+        await page.goto(new URL("/settings", demo.url).href);
+        await expect(page.getByRole("heading", { name: "Not available to you" })).toBeVisible();
+      }
+    });
+  }
+
+  test("the Overview filters and splits by department", async ({ page }) => {
+    await logIn(page);
+    const all = await tokensByMachine(page);
+    await page.goto(new URL("/?range=30", demo.url).href);
+    const button = page.getByRole("button", { name: /^Departments / });
+    await button.click();
+    const list = page.getByRole("dialog", { name: "Filter by departments" });
+    await expect(list.locator(".ms-list > ul > li")).toHaveText([
+      "Design",
+      "Engineering",
+      "No department",
+    ]);
+    await list.getByRole("checkbox", { name: "Engineering" }).check();
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/department=/);
+    await expect(tile(page, "Tokens")).toHaveText(
+      compact((all["Office PC"] ?? 0) + (all["Build server"] ?? 0)),
+    );
+    // The machines list narrows to the department's.
+    await page.getByRole("button", { name: /^Machines / }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Filter by machines" }).locator(".ms-list > ul > li"),
+    ).toHaveText(["Build server", "Office PC"]);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    await choose(page, "by", "department");
+    await expect(page.locator("#chart-title")).toHaveText("Daily tokens by department");
+    expect((await page.locator(".legend .legend-item").allInnerTexts()).sort()).toEqual([
+      "Design",
+      "Engineering",
+      "No department",
+    ]);
+  });
+
+  test("managers approve into their department, with an owner from it", async ({ page }) => {
+    await logIn(page, "morgan");
+    await page.goto(new URL("/approve", demo.url).href);
+    await expect(page.getByRole("heading", { name: "Waiting to join" })).toHaveCount(0);
+    const department = page.getByLabel("Department");
+    await expect(department.locator("option")).toHaveText(["Engineering"]);
+    const owner = page.getByLabel("Owner");
+    await expect(owner.locator("option")).toHaveText([
+      "Nobody: a shared machine",
+      "morgan",
+      "riley",
+    ]);
+    await owner.selectOption({ label: "riley" });
+    await page.getByLabel("Code shown on the machine").fill("K7QX82MD");
+    await page.getByRole("button", { name: "Approve" }).click();
+    await expect(page.getByText("Approved Studio PC")).toBeVisible();
+    const [row] = (
+      await demo.db
+        .prepare(
+          `SELECT p.status, d.name AS department, u.username AS owner FROM pairing_requests p
+           JOIN departments d ON d.id = p.department_id JOIN users u ON u.id = p.owner_id
+          WHERE p.user_code = 'K7QX-82MD'`,
+        )
+        .all()
+    ).results;
+    expect(row).toEqual({ status: "approved", department: "Engineering", owner: "riley" });
+  });
+
+  test("managers add and manage the people in their department", async ({ page }) => {
+    await logIn(page, "morgan");
+    await page.goto(new URL("/users", demo.url).href);
+    const rows = page.locator("tbody tr");
+    await expect(rows.locator("th")).toHaveText(["morgan (you)", "riley"]);
+    await expect(rows.filter({ hasText: "riley" })).toContainText("Member of Engineering");
+
+    await page.getByLabel("Username").fill("taylor");
+    await page.getByLabel("Role in Engineering").selectOption("member");
+    await page.getByRole("button", { name: "Add user…" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Temporary password").fill("a-temporary-password-1");
+    await dialog.getByLabel("Repeat it").fill("a-temporary-password-1");
+    await dialog.getByRole("button", { name: "Set password" }).click();
+    const taylor = rows.filter({ hasText: "taylor" });
+    await expect(taylor).toContainText("Member of Engineering");
+
+    await taylor.getByRole("button", { name: "Access…" }).click();
+    await page.getByRole("dialog").getByLabel("Role in Engineering").selectOption("viewer");
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+    await expect(taylor).toContainText("Viewer of Engineering");
+
+    await taylor.getByRole("button", { name: "Delete" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect(taylor).toHaveCount(0);
+  });
+
+  test("admins manage departments, and machines' departments and owners", async ({ page }) => {
+    await logIn(page);
+    await page.goto(new URL("/departments", demo.url).href);
+    const rows = page.locator("tbody tr");
+    await expect(rows.filter({ hasText: "Engineering" }).locator("td")).toHaveText([
+      "2",
+      "2",
+      /Rename/,
+    ]);
+    await page.getByRole("button", { name: "Add a department…" }).click();
+    await page.getByRole("dialog").getByLabel("Name").fill("Support");
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+    const support = rows.filter({ hasText: "Support" });
+    await expect(support).toBeVisible();
+    await support.getByRole("button", { name: "Rename" }).click();
+    await page.getByRole("dialog").getByLabel("Name").fill("Customer support");
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+    await expect(rows.filter({ hasText: "Customer support" })).toBeVisible();
+    await rows
+      .filter({ hasText: "Customer support" })
+      .getByRole("button", { name: "Delete" })
+      .click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect(rows.filter({ hasText: "Customer support" })).toHaveCount(0);
+
+    // Machines: department and owner columns, search, a department filter, editing.
+    await page.goto(new URL("/machines", demo.url).href);
+    const machine = (name: string) => page.locator("tbody tr").filter({ hasText: name });
+    await expect(machine("Office PC").locator("td").nth(0)).toHaveText("Engineering");
+    await expect(machine("Office PC").locator("td").nth(1)).toHaveText("riley");
+    await expect(machine("Home PC").locator("td").nth(1)).toHaveText("Shared");
+    await page.getByLabel("Search machines").fill("lap");
+    await expect(page.locator("tbody th .name-cell")).toHaveText(["Laptop"]);
+    await page.getByLabel("Search machines").fill("");
+    await page.getByLabel("Department", { exact: true }).selectOption({ label: "Engineering" });
+    await expect(page.locator("tbody th .name-cell")).toHaveText(["Build server", "Office PC"]);
+    await page.getByRole("button", { name: "Tokens (30 days)" }).click();
+    await expect(page.locator("th[aria-sort]")).toHaveAttribute("aria-sort", "descending");
+
+    await machine("Build server").getByRole("button", { name: "Edit" }).click();
+    const edit = page.getByRole("dialog");
+    await expect(edit.getByLabel("Owner").locator("option")).toHaveText([
+      "Nobody: a shared machine",
+      "morgan",
+      "riley",
+    ]);
+    await edit.getByLabel("Owner").selectOption({ label: "morgan" });
+    await edit.getByRole("button", { name: "Save" }).click();
+    await expect(machine("Build server").locator("td").nth(1)).toHaveText("morgan");
+    await machine("Build server").getByRole("button", { name: "Edit" }).click();
+    await page
+      .getByRole("dialog")
+      .getByLabel("Owner")
+      .selectOption({ label: "Nobody: a shared machine" });
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+    await expect(machine("Build server").locator("td").nth(1)).toHaveText("Shared");
   });
 });

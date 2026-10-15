@@ -1,4 +1,5 @@
-import { ApiError, api, type PairingRequest } from "../lib/api";
+import { isAdmin } from "../lib/access";
+import { ApiError, api, type Department, type PairingRequest, type User } from "../lib/api";
 import { h, toast } from "../lib/dom";
 import { OS_LABEL, relativeTime } from "../lib/format";
 import type { PageContext } from "../main";
@@ -13,6 +14,35 @@ function formatCode(raw: string): string {
 }
 
 export async function approvePage(ctx: PageContext) {
+  const admin = isAdmin(ctx.me);
+  // Admins approve into any department, or none; managers into theirs.
+  const [{ departments: all }, { users }] = await Promise.all([
+    api<{ departments: Department[] }>("/departments"),
+    api<{ users: User[] }>("/users"),
+  ]);
+  const departments = admin ? all : all.filter((d) => d.my_role === "manager");
+  const department = h(
+    "select",
+    { "aria-describedby": "department-hint" },
+    admin ? h("option", { value: "" }, "No department") : null,
+    departments.map((d) => h("option", { value: d.id }, d.name)),
+  );
+  const owner = h("select", { "aria-describedby": "owner-hint" });
+  /** The owners to offer: people with a role in the department, or anyone (admins, no department). */
+  function fillOwners() {
+    const keep = owner.value;
+    const dep = department.value;
+    const people = users.filter((u) =>
+      dep === "" ? true : u.departments.some((d) => d.id === dep),
+    );
+    owner.replaceChildren(
+      h("option", { value: "" }, "Nobody: a shared machine"),
+      ...people.map((u) => h("option", { value: u.id }, u.username)),
+    );
+    owner.value = people.some((u) => u.id === keep) ? keep : "";
+  }
+  department.addEventListener("change", fillOwners);
+  fillOwners();
   const code = h("input", {
     class: "code-input",
     autocomplete: "off",
@@ -56,6 +86,30 @@ export async function approvePage(ctx: PageContext) {
       code,
     ),
     nameField,
+    departments.length > 0 || !admin
+      ? h(
+          "label",
+          null,
+          "Department",
+          h(
+            "span",
+            { class: "hint", id: "department-hint" },
+            admin ? "Its managers and viewers will see it." : "One of the departments you manage.",
+          ),
+          department,
+        )
+      : null,
+    h(
+      "label",
+      null,
+      "Owner",
+      h(
+        "span",
+        { class: "hint", id: "owner-hint" },
+        "Who uses it. Owners always see their machines; members see only theirs.",
+      ),
+      owner,
+    ),
     message,
     h("div", { class: "row" }, approve, deny),
   );
@@ -67,8 +121,12 @@ export async function approvePage(ctx: PageContext) {
       code.focus();
       return;
     }
-    const body: Record<string, string> = { user_code: code.value };
-    if (action === "approve" && name.value.trim()) body.name = name.value.trim();
+    const body: Record<string, string | null> = { user_code: code.value };
+    if (action === "approve") {
+      if (name.value.trim()) body.name = name.value.trim();
+      body.department_id = department.value || null;
+      body.owner_id = owner.value || null;
+    }
     approve.disabled = deny.disabled = true;
     try {
       const res = await api<{ name?: string }>(`/pairing/${action}`, { method: "POST", body });
@@ -78,7 +136,8 @@ export async function approvePage(ctx: PageContext) {
           : "Request denied",
       );
       form.reset();
-      await loadPending();
+      fillOwners();
+      if (admin) await loadPending();
       ctx.refreshApprovals();
     } catch (e) {
       if (e instanceof ApiError && e.code === "not_found") {
@@ -89,6 +148,10 @@ export async function approvePage(ctx: PageContext) {
         name.focus();
       } else if (e instanceof ApiError && e.code === "invalid_code") {
         message.textContent = "That doesn't look like a valid code.";
+      } else if (e instanceof ApiError && e.code === "department_required") {
+        message.textContent = "Choose one of the departments you manage.";
+      } else if (e instanceof ApiError && e.code === "owner_not_in_department") {
+        message.textContent = "The owner needs a role in the machine's department.";
       } else {
         message.textContent = "Something went wrong. Try again.";
       }
@@ -178,9 +241,11 @@ export async function approvePage(ctx: PageContext) {
       ),
     ),
     h("section", { class: "card" }, form),
-    pendingCard,
   );
+  // Only admins see who is waiting; managers approve the code they're given.
+  if (admin) ctx.main.append(pendingCard);
   code.focus();
+  if (!admin) return undefined;
   await loadPending();
   const timer = window.setInterval(() => {
     if (document.visibilityState === "visible") void loadPending().catch(() => undefined);

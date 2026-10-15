@@ -3,7 +3,10 @@
 //
 //   npm run build -w dashboard && node worker/scripts/demo.mjs [port]
 //
-// Log in as "demo" with password "demo-password". Nothing is saved.
+// Log in as "demo" with password "demo-password" (an admin). Others show
+// what each role sees: "sam" (viewer of everything), "morgan" (manager of
+// Engineering), "riley" and "jordan" (members), "casey" (viewer of Design);
+// each one's password is "<name>-password". Nothing is saved.
 import { createHash, pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -102,6 +105,7 @@ export async function startDemo({ port: listenPort = port, seed = true, quiet = 
   if (!quiet) {
     console.log(`ccunified demo running at ${url}`);
     console.log('Log in as "demo" with password "demo-password". Ctrl+C to stop.');
+    console.log('Other roles: sam, morgan, riley, jordan, casey (password "<name>-password").');
   }
   return { mf, url: String(url), db, github };
 }
@@ -113,17 +117,33 @@ async function seedDemo(db) {
     .first();
   await db.prepare("UPDATE settings SET value = 'America/Toronto' WHERE key = 'timezone'").run();
 
+  // Two departments, and people in each role. Everyone's password is
+  // "<name>-password".
+  const departments = { Engineering: randomUUID(), Design: randomUUID() };
+  for (const [name, id] of Object.entries(departments)) {
+    await db
+      .prepare("INSERT INTO departments (id, name, created_at) VALUES (?1, ?2, ?3)")
+      .bind(id, name, now - 50 * 864e5 + name.length)
+      .run();
+  }
   const users = [
-    ["demo", "admin"],
-    ["sam", "viewer"],
+    ["demo", "admin", []],
+    ["sam", "viewer", []],
+    ["morgan", null, [["Engineering", "manager"]]],
+    ["riley", null, [["Engineering", "member"]]],
+    ["jordan", null, [["Design", "member"]]],
+    ["casey", null, [["Design", "viewer"]]],
   ];
-  for (const [name, role] of users) {
+  const userIds = {};
+  for (const [name, role, roles] of users) {
+    const id = randomUUID();
+    userIds[name] = id;
     await db
       .prepare(
         "INSERT INTO users (id, username, password_hash, role, created_at, password_changed_at, last_login_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
       )
       .bind(
-        randomUUID(),
+        id,
         name,
         serverHash(loginKey(installId, name, `${name}-password`)),
         role,
@@ -131,6 +151,12 @@ async function seedDemo(db) {
         now - 3600e3,
       )
       .run();
+    for (const [department, departmentRole] of roles) {
+      await db
+        .prepare("INSERT INTO department_roles (department_id, user_id, role) VALUES (?1, ?2, ?3)")
+        .bind(departments[department], id, departmentRole)
+        .run();
+    }
   }
 
   // Each tool's models: [name, share of the day's usage, input price per million tokens].
@@ -156,6 +182,8 @@ async function seedDemo(db) {
       interval: 30,
       created: 90,
       tools: { claude, codex },
+      department: "Engineering",
+      owner: "riley",
     },
     {
       name: "Laptop",
@@ -165,6 +193,8 @@ async function seedDemo(db) {
       interval: 15,
       created: 80,
       tools: { claude, gemini },
+      department: "Design",
+      owner: "jordan",
     },
     {
       name: "Build server",
@@ -175,6 +205,7 @@ async function seedDemo(db) {
       created: 60,
       version: "0.0.9",
       tools: { claude },
+      department: "Engineering",
     },
     {
       name: "Home PC",
@@ -203,7 +234,7 @@ async function seedDemo(db) {
     const id = randomUUID();
     await db
       .prepare(
-        "INSERT INTO machines (id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes, token_hash, created_at, last_seen_at, tools) VALUES (?1, ?2, ?3, 'amd64', ?4, '20.0.32', ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO machines (id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes, token_hash, created_at, last_seen_at, tools, department_id, owner_id) VALUES (?1, ?2, ?3, 'amd64', ?4, '20.0.32', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
       )
       .bind(
         id,
@@ -215,6 +246,8 @@ async function seedDemo(db) {
         now - m.created * 864e5,
         m.seen,
         JSON.stringify(Object.keys(m.tools)),
+        m.department ? departments[m.department] : null,
+        m.owner ? userIds[m.owner] : null,
       )
       .run();
     const rows = [];

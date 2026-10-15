@@ -1,4 +1,5 @@
 import { encode } from "uqr";
+import { describeAccess } from "../lib/access";
 import { ApiError, api } from "../lib/api";
 import { type Child, fill, h, openDialog, s, toast } from "../lib/dom";
 import { loginKey } from "../lib/password";
@@ -319,7 +320,7 @@ export async function accountPage(ctx: PageContext) {
         "div",
         null,
         h("h1", null, "Your account"),
-        h("p", null, `${ctx.me.username} · ${ctx.me.role === "admin" ? "Admin" : "Viewer"}`),
+        h("p", null, `${ctx.me.username} · ${describeAccess(ctx.me.role, ctx.me.departments)}`),
       ),
     ),
     h(

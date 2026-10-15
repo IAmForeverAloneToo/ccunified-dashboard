@@ -1,10 +1,12 @@
 import "./styles.css";
+import { isAdmin, managesSomething, seesAll } from "./lib/access";
 import { ApiError, api, type Me, onAuthProblem, type PairingRequest } from "./lib/api";
 import { clear, h, toast } from "./lib/dom";
 import { logo } from "./lib/logo";
 import { accountPage } from "./pages/account";
 import { approvePage } from "./pages/approve";
 import { changePasswordPage } from "./pages/change-password";
+import { departmentsPage } from "./pages/departments";
 import { loginPage } from "./pages/login";
 import { machinesPage } from "./pages/machines";
 import { overviewPage } from "./pages/overview";
@@ -28,16 +30,28 @@ type Page = (ctx: PageContext) => Promise<Cleanup | undefined> | Cleanup | undef
 interface Route {
   title: string;
   page: Page;
-  admin?: boolean;
+  /** Who may use the page (everyone if absent); others don't see it in the menu. */
+  allow?: (me: Me) => boolean;
   nav?: string;
 }
 
 const ROUTES: Record<string, Route> = {
   "/": { title: "Overview", page: overviewPage, nav: "Overview" },
   "/machines": { title: "Machines", page: machinesPage, nav: "Machines" },
-  "/approve": { title: "Approve a machine", page: approvePage, admin: true, nav: "Approvals" },
-  "/users": { title: "Users", page: usersPage, admin: true, nav: "Users" },
-  "/settings": { title: "Settings", page: settingsPage, nav: "Settings" },
+  "/approve": {
+    title: "Approve a machine",
+    page: approvePage,
+    allow: managesSomething,
+    nav: "Approvals",
+  },
+  "/users": { title: "Users", page: usersPage, allow: managesSomething, nav: "Users" },
+  "/departments": {
+    title: "Departments",
+    page: departmentsPage,
+    allow: isAdmin,
+    nav: "Departments",
+  },
+  "/settings": { title: "Settings", page: settingsPage, allow: seesAll, nav: "Settings" },
   "/account": { title: "Your account", page: accountPage },
 };
 
@@ -152,7 +166,7 @@ function shell(route: Route): HTMLElement {
   });
 
   const links = Object.entries(ROUTES)
-    .filter(([, r]) => r.nav && (!r.admin || user.role === "admin"))
+    .filter(([, r]) => r.nav && (!r.allow || r.allow(user)))
     .map(([p, r]) =>
       h(
         "a",
@@ -221,7 +235,7 @@ async function render(): Promise<void> {
     window.clearInterval(approvalsTimer);
     document.title = "Log in · ccunified";
     cleanup = loginPage(root, query, (user) => {
-      me = user;
+      me = null; // read in full from /api/me
       const next = query.get("next");
       const target = user.must_change_password
         ? "/change-password"
@@ -279,12 +293,12 @@ async function render(): Promise<void> {
     return;
   }
   const main = shell(route);
-  if (route.admin && me.role !== "admin") {
+  if (route.allow && !route.allow(me)) {
     main.append(
       h(
         "div",
         { class: "card empty" },
-        h("h1", null, "Admins only"),
+        h("h1", null, "Not available to you"),
         h("p", null, "Ask an admin of this dashboard if you need this page."),
       ),
     );

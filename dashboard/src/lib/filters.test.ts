@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { DetailedSummary, SummaryDetail } from "./api";
 import {
+  allowedMachines,
   allowedModels,
   applyFilters,
   available,
@@ -16,6 +17,7 @@ describe("filters in the address", () => {
   test("survive a round trip and keep the page's other settings", () => {
     const q = new URLSearchParams("range=30&by=tool&machine=old");
     writeFilters(q, {
+      departments: ["d1", "none"],
       machines: ["m1", "m2"],
       tools: ["kimi"],
       families: ["opus"],
@@ -23,7 +25,9 @@ describe("filters in the address", () => {
     });
     expect(q.get("range")).toBe("30");
     expect(q.getAll("machine")).toEqual(["m1", "m2"]);
+    expect(q.getAll("department")).toEqual(["d1", "none"]);
     expect(readFilters(new URLSearchParams(q.toString()))).toEqual({
+      departments: ["d1", "none"],
       machines: ["m1", "m2"],
       tools: ["kimi"],
       families: ["opus"],
@@ -278,5 +282,62 @@ describe("what each list offers", () => {
       tools: ["claude"],
       models: [],
     });
+  });
+});
+
+describe("departments", () => {
+  // desk and laptop are in Design; idle has no department.
+  const departmentOf = (m: string) => ({ desk: "design", laptop: "design" })[m] ?? "none";
+  const summary = {
+    timezone: "UTC",
+    today: "2026-10-02",
+    from: "2026-10-01",
+    to: "2026-10-02",
+    tools: ["claude", "kimi"],
+    models: ["claude-opus-5-5", "k3"],
+    bucket: "day",
+    detail: {
+      days: ["2026-10-01"],
+      machines: ["desk", "laptop", "idle"],
+      sources: ["claude", "kimi"],
+      models: ["claude-opus-5-5", "k3"],
+      rows: [
+        [0, 0, 0, 0, 10, 0, 0, 0, 0],
+        [0, 1, 1, 1, 20, 0, 0, 0, 0],
+        [0, 2, 0, 0, 40, 0, 0, 0, 0],
+      ],
+    },
+  } satisfies DetailedSummary;
+  const f = (departments: string[]) => ({ ...noFilters(), departments });
+
+  test("a department keeps its machines' usage", () => {
+    const tokens = (departments: string[]) =>
+      applyFilters(summary, f(departments), departmentOf).by_day_machine.reduce(
+        (n, r) => n + r.input_tokens,
+        0,
+      );
+    expect(tokens([])).toBe(70);
+    expect(tokens(["design"])).toBe(30);
+    expect(tokens(["none"])).toBe(40);
+    expect(tokens(["design", "none"])).toBe(70);
+  });
+
+  test("the lists narrow by department, and the departments by the other picks", () => {
+    const a = available(summary, f(["none"]), departmentOf);
+    expect([...a.machines]).toEqual(["idle"]);
+    expect([...a.tools]).toEqual(["claude"]);
+    expect([...a.departments].sort()).toEqual(["design", "none"]);
+    const kimi = available(summary, { ...noFilters(), tools: ["kimi"] }, departmentOf);
+    expect([...kimi.departments]).toEqual(["design"]);
+  });
+
+  test("the machines to ask the server about", () => {
+    const known = ["desk", "laptop", "idle"];
+    expect(allowedMachines(noFilters(), known, departmentOf)).toBeNull();
+    expect(allowedMachines(f(["design"]), known, departmentOf)).toEqual(["desk", "laptop"]);
+    expect(
+      allowedMachines({ ...f(["design"]), machines: ["idle", "desk"] }, known, departmentOf),
+    ).toEqual(["desk"]);
+    expect(allowedMachines(f(["nowhere"]), known, departmentOf)).toEqual([]);
   });
 });

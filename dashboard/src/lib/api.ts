@@ -73,12 +73,47 @@ export async function getCached<T>(path: string): Promise<T> {
   return data;
 }
 
+/** Admins see and manage everything; viewers see everything. */
+export type DashboardRole = "admin" | "viewer";
+
+/** Managers see and manage a department; viewers see it; members can own its machines. */
+export type DepartmentRole = "manager" | "viewer" | "member";
+
 export interface Me {
   id: string;
   username: string;
-  role: "admin" | "viewer";
+  /** Null for people with only department roles. */
+  role: DashboardRole | null;
+  departments: { id: string; name: string; role: DepartmentRole }[];
   totp_enabled: boolean;
   must_change_password: boolean;
+}
+
+export interface Department {
+  id: string;
+  name: string;
+  created_at: number;
+  /** Machines in it (not counting revoked ones). */
+  machines: number;
+  /** People with a role in it. */
+  people: number;
+  /** The logged-in user's role in it. */
+  my_role: DepartmentRole | null;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  role: DashboardRole | null;
+  /** Their roles (for managers: only in the departments they manage). */
+  departments: { id: string; role: DepartmentRole }[];
+  totp_enabled: boolean;
+  must_change_password: boolean;
+  created_at: number;
+  last_login_at: number | null;
+  disabled_at: number | null;
+  /** Whether the logged-in user can change this user. */
+  can_manage: boolean;
 }
 
 export interface Totals {
@@ -142,12 +177,19 @@ export interface Machine {
   revoked_at: number | null;
   /** The tools this machine has reported usage for. */
   tools: string[];
+  department: { id: string; name: string } | null;
+  /** Null for a shared machine. */
+  owner: { id: string; username: string } | null;
   status: "ok" | "late" | "never" | "revoked";
   update_available: boolean;
+  /** Whether the logged-in user can rename, move, revoke it and pick its owner. */
+  can_manage: boolean;
 }
 
 export interface MachinesResponse {
   latest_version: string | null;
+  /** The GitHub repository releases come from, for install commands. */
+  source_repo: string;
   machines: Machine[];
 }
 
@@ -161,17 +203,6 @@ export interface PairingRequest {
   client_ip: string | null;
   created_at: number;
   expires_at: number;
-}
-
-export interface User {
-  id: string;
-  username: string;
-  role: "admin" | "viewer";
-  totp_enabled: boolean;
-  must_change_password: boolean;
-  created_at: number;
-  last_login_at: number | null;
-  disabled_at: number | null;
 }
 
 export interface SettingsResponse {

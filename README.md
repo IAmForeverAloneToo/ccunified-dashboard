@@ -34,8 +34,9 @@ side, with tokens and estimated cost per machine, per tool and per model.
   and estimated cost. No prompts, code, file names or project names.
 - **Simple to add machines.** A new machine shows a short code; you approve it
   on the dashboard.
-- **Accounts with roles.** Admins and read-only viewers, with optional
-  two-factor login.
+- **Accounts with roles.** Admins and read-only viewers for the whole
+  dashboard, and departments with managers, viewers and members who see only
+  their department's or their own machines. Optional two-factor login.
 - **Set up from the terminal.** One command installs the program; a wizard
   creates the dashboard on Cloudflare for you. No Node.js, Wrangler or manual
   DNS changes needed.
