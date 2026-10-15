@@ -41,9 +41,9 @@ The overview answers "how much did I use my coding tools, and where":
   [Filtering](#filtering-to-some-machines-tools-or-models)).
 - **Totals** for the period: tokens (with how many were cache reads), output
   tokens, estimated cost, and how many machines are reporting on schedule.
-- **Chart:** one column per day (per week or month for long periods), stacked
-  by machine or model. Hover over or tab to a column to see its numbers;
-  **Show as table** shows the same data as a table.
+- **Chart:** one column per day (per week over 92 days, per month over two
+  years), stacked by machine or model. Hover over or tab to a column to see
+  its numbers; **Show as table** shows the same data as a table.
 - **Machines, Tools and Models tables** with each one's input, output, cache
   and total tokens, estimated cost and share of the period. The Tools table
   appears once a second tool has reported usage.
@@ -51,7 +51,8 @@ The overview answers "how much did I use my coding tools, and where":
   schedule.
 
 Days begin and end in the dashboard's time zone (shown under the page title).
-The page refreshes every minute while the period includes today.
+The page refreshes while the period includes today: every minute for
+periods up to 92 days, and every 10 minutes for longer ones.
 
 ### Picking your own dates
 

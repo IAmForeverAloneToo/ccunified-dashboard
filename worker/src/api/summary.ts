@@ -4,7 +4,7 @@ import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { fail } from "../lib/http";
 import { getSettings } from "../lib/settings";
-import { addDays, daysBetween, todayIn } from "../lib/time";
+import { addDays, type Bucket, bucketFor, daysBetween, todayIn } from "../lib/time";
 
 const MAX_SPAN_DAYS = 3660;
 
@@ -13,12 +13,24 @@ const Query = z.object({
   to: z.iso.date().optional(),
   /** Last N days ending today (in the dashboard's time zone); ignored if `from` is given. */
   days: z.coerce.number().int().min(1).max(MAX_SPAN_DAYS).optional(),
-  /** detail=1 adds every row (day, machine, tool, model), for filtering in the browser. */
+  /** all=1: from the first day with usage (at most 3660 days back); ignores `from` and `days`. */
+  all: z.literal("1").optional(),
+  /** detail=1: every row (day, machine, tool, model), for filtering in the browser. */
   detail: z.literal("1").optional(),
 });
 
-/** A row of `detail`: [day, machine, tool, model, input, output, cache write, cache read, cost]. */
-type DetailRow = [string, number, number, number, number, number, number, number, number];
+/** Each bucket's first day, in SQL: the day itself, its week's Monday, or the 1st of its month. */
+const BUCKET_START: Record<Bucket, string> = {
+  day: "day",
+  week: "date(day, '-6 days', 'weekday 1')",
+  month: "date(day, 'start of month')",
+};
+
+/** [day, machine, tool, model, input, output, cache write, cache read, cost] */
+type UsageRow = [string, string, string, string, number, number, number, number, number];
+
+/** A row of `detail`: the same, with the day, machine, tool and model as positions in its lists. */
+type DetailRow = [number, number, number, number, number, number, number, number, number];
 
 /** Gives each distinct value a small number, so repeated ids aren't repeated in the answer. */
 function indexer() {
@@ -46,35 +58,45 @@ interface Totals {
   cost_usd: number;
 }
 
-interface Row extends Totals {
-  day: string;
-  machine_id: string;
-  source: string;
-  model: string;
-}
-
-function emptyTotals(): Totals {
+function totalsOf(r: UsageRow): Totals {
   return {
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_creation_tokens: 0,
-    cache_read_tokens: 0,
-    cost_usd: 0,
+    input_tokens: r[4],
+    output_tokens: r[5],
+    cache_creation_tokens: r[6],
+    cache_read_tokens: r[7],
+    cost_usd: r[8],
   };
 }
 
-function add(into: Totals, row: Totals): void {
-  into.input_tokens += row.input_tokens;
-  into.output_tokens += row.output_tokens;
-  into.cache_creation_tokens += row.cache_creation_tokens;
-  into.cache_read_tokens += row.cache_read_tokens;
-  into.cost_usd += row.cost_usd;
+function add(into: Totals, r: UsageRow): void {
+  into.input_tokens += r[4];
+  into.output_tokens += r[5];
+  into.cache_creation_tokens += r[6];
+  into.cache_read_tokens += r[7];
+  into.cost_usd += r[8];
+}
+
+/** Adds a row to the total kept under `key`, starting it with `fields` if it's new. */
+function addTo<T extends object>(
+  map: Map<string, T & Totals>,
+  key: string,
+  fields: T,
+  r: UsageRow,
+): void {
+  const t = map.get(key);
+  if (t) add(t, r);
+  else map.set(key, { ...fields, ...totalsOf(r) });
 }
 
 /**
- * GET /api/summary?from=YYYY-MM-DD&to=YYYY-MM-DD (or ?days=N) — usage per
- * day, split by machine, by model and by tool, and each machine's usage per
- * tool for the whole period. Defaults to the last 30 days.
+ * GET /api/summary?from=YYYY-MM-DD&to=YYYY-MM-DD (or ?days=N, or ?all=1) —
+ * usage per day, split by machine, by model and by tool, and each machine's
+ * usage per tool for the whole period. Defaults to the last 30 days.
+ *
+ * With detail=1 it answers with the rows themselves instead, for the
+ * Overview to total and filter in the browser. Over 92 days, where the chart
+ * shows weeks or months, the rows are summed per week or month: a chart point
+ * needs no more, and it keeps the Worker within the free plan's CPU time.
  *
  * Responds 304 when the dashboard already has the current data (ETag), which
  * keeps D1 reads tiny while a dashboard polls.
@@ -88,97 +110,113 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
   const settings = await getSettings(c.env.DB);
   const today = todayIn(settings.timezone);
   const to = query.data.to ?? today;
-  const from = query.data.from ?? addDays(to, -((query.data.days ?? 30) - 1));
+  const all = query.data.all === "1";
+  let from = all
+    ? addDays(to, -(MAX_SPAN_DAYS - 1))
+    : (query.data.from ?? addDays(to, -((query.data.days ?? 30) - 1)));
   if (from > to) fail(400, "invalid_request", { message: "from must not be after to" });
   if (daysBetween(from, to) > MAX_SPAN_DAYS) {
     fail(400, "invalid_request", { message: `at most ${MAX_SPAN_DAYS} days` });
   }
 
   const detail = query.data.detail === "1";
-  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}${detail ? ":detail" : ""}"`;
+  const etag = `W/"${settings.dataVersion}:${settings.timezone}:${today}:${from}:${to}${all ? ":all" : ""}${detail ? ":detail2" : ""}"`;
   if (c.req.header("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { etag } });
   }
 
-  const { results } = await c.env.DB.prepare(
-    `SELECT day, machine_id, source, model,
-            SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-            SUM(cache_creation_tokens) AS cache_creation_tokens,
-            SUM(cache_read_tokens) AS cache_read_tokens, SUM(cost_usd) AS cost_usd
-       FROM usage_daily
-      WHERE day BETWEEN ?1 AND ?2
-      GROUP BY day, machine_id, source, model
-      ORDER BY day`,
+  if (all) {
+    // Starts at the first day with usage (one index lookup).
+    const first = await c.env.DB.prepare(
+      "SELECT MIN(day) AS day FROM usage_daily WHERE day BETWEEN ?1 AND ?2",
+    )
+      .bind(from, to)
+      .first<{ day: string | null }>();
+    from = first?.day ?? to;
+  }
+  const bucket = detail ? bucketFor(daysBetween(from, to)) : "day";
+  // Each (machine, tool, day, model) has one row, so daily rows need no
+  // grouping: reading them in day order is one row read per row.
+  const rows = await c.env.DB.prepare(
+    bucket === "day"
+      ? `SELECT day, machine_id, source, model, input_tokens, output_tokens,
+                cache_creation_tokens, cache_read_tokens, cost_usd
+           FROM usage_daily
+          WHERE day BETWEEN ?1 AND ?2
+          ORDER BY day`
+      : `SELECT ${BUCKET_START[bucket]} AS start, machine_id, source, model,
+                SUM(input_tokens), SUM(output_tokens), SUM(cache_creation_tokens),
+                SUM(cache_read_tokens), SUM(cost_usd)
+           FROM usage_daily
+          WHERE day BETWEEN ?1 AND ?2
+          GROUP BY start, machine_id, source, model`,
   )
     .bind(from, to)
-    .all<Row>();
+    .raw<UsageRow>();
+
+  const head = {
+    timezone: settings.timezone,
+    today,
+    from,
+    to,
+    /** Every tool the dashboard has seen, in the order they first appeared. */
+    tools: settings.tools,
+    /** Every model the dashboard has seen, in the order they first appeared. */
+    models: settings.models,
+  };
+
+  if (detail) {
+    const days = indexer();
+    const machines = indexer();
+    const sources = indexer();
+    const models = indexer();
+    const out: DetailRow[] = rows.map((r) => [
+      days.of(r[0]),
+      machines.of(r[1]),
+      sources.of(r[2]),
+      models.of(r[3]),
+      r[4],
+      r[5],
+      r[6],
+      r[7],
+      r[8],
+    ]);
+    return c.json(
+      {
+        ...head,
+        /** What each row's day stands for: a day, or the first day of a week or month. */
+        bucket,
+        detail: {
+          days: days.list,
+          machines: machines.list,
+          sources: sources.list,
+          models: models.list,
+          rows: out,
+        },
+      },
+      200,
+      { etag },
+    );
+  }
 
   const byMachine = new Map<string, Totals & { day: string; machine_id: string }>();
   const byModel = new Map<string, Totals & { day: string; model: string }>();
   const bySource = new Map<string, Totals & { day: string; source: string }>();
   const machineSource = new Map<string, Totals & { machine_id: string; source: string }>();
-  for (const r of results) {
-    const mk = `${r.day}|${r.machine_id}`;
-    const m = byMachine.get(mk) ?? { day: r.day, machine_id: r.machine_id, ...emptyTotals() };
-    add(m, r);
-    byMachine.set(mk, m);
-    const dk = `${r.day}|${r.model}`;
-    const d = byModel.get(dk) ?? { day: r.day, model: r.model, ...emptyTotals() };
-    add(d, r);
-    byModel.set(dk, d);
-    const sk = `${r.day}|${r.source}`;
-    const t = bySource.get(sk) ?? { day: r.day, source: r.source, ...emptyTotals() };
-    add(t, r);
-    bySource.set(sk, t);
-    const ms = `${r.machine_id}|${r.source}`;
-    const u = machineSource.get(ms) ?? {
-      machine_id: r.machine_id,
-      source: r.source,
-      ...emptyTotals(),
-    };
-    add(u, r);
-    machineSource.set(ms, u);
+  for (const r of rows) {
+    const [day, machine_id, source, model] = r;
+    addTo(byMachine, `${day}|${machine_id}`, { day, machine_id }, r);
+    addTo(byModel, `${day}|${model}`, { day, model }, r);
+    addTo(bySource, `${day}|${source}`, { day, source }, r);
+    addTo(machineSource, `${machine_id}|${source}`, { machine_id, source }, r);
   }
-
-  let detailBody: object | undefined;
-  if (detail) {
-    const machinesIx = indexer();
-    const sourcesIx = indexer();
-    const modelsIx = indexer();
-    const rows: DetailRow[] = results.map((r) => [
-      r.day,
-      machinesIx.of(r.machine_id),
-      sourcesIx.of(r.source),
-      modelsIx.of(r.model),
-      r.input_tokens,
-      r.output_tokens,
-      r.cache_creation_tokens,
-      r.cache_read_tokens,
-      r.cost_usd,
-    ]);
-    detailBody = {
-      machines: machinesIx.list,
-      sources: sourcesIx.list,
-      models: modelsIx.list,
-      rows,
-    };
-  }
-
   return c.json(
     {
-      timezone: settings.timezone,
-      today,
-      from,
-      to,
-      /** Every tool the dashboard has seen, in the order they first appeared. */
-      tools: settings.tools,
-      /** Every model the dashboard has seen, in the order they first appeared. */
-      models: settings.models,
+      ...head,
       by_day_machine: [...byMachine.values()],
       by_day_model: [...byModel.values()],
       by_day_source: [...bySource.values()],
       by_machine_source: [...machineSource.values()],
-      ...(detailBody ? { detail: detailBody } : {}),
     },
     200,
     { etag },

@@ -488,6 +488,19 @@ test("a custom date range shows exactly what ccusage reports for those days", as
   await expect(tile("Output tokens")).toHaveText(compact(sum.output_tokens));
   await expect(tile("Estimated cost")).toHaveText(money(sum.cost_usd));
   await page.screenshot({ path: test.info().outputPath("custom-range.png"), fullPage: true });
+
+  // A year: the dashboard gets the rows summed per week, and the totals still
+  // match ccusage's for those 365 days.
+  const yearAgo = shift(today, -364);
+  const year = logs.machines.map((m) =>
+    ccusageTotals(ccusagePath, m, TIMEZONE, { since: yearAgo, until: today }),
+  ) as typeof expected;
+  const yearSum = add(year[0].total, year[1].total);
+  await page.goto(`${DASHBOARD}/?range=365`);
+  await expect(page.locator("#chart-title")).toHaveText("Weekly tokens by machine");
+  await expect(tile("Tokens")).toHaveText(compact(allTokens(yearSum)));
+  await expect(tile("Output tokens")).toHaveText(compact(yearSum.output_tokens));
+  await expect(tile("Estimated cost")).toHaveText(money(yearSum.cost_usd));
 });
 
 test("filters show exactly what ccusage reports for those machines, tools and models", async () => {

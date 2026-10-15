@@ -32,3 +32,13 @@ export function addDays(date: string, days: number): string {
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1;
 }
+
+/** A step of the dashboard's chart: a day, a week (from Monday) or a month. */
+export type Bucket = "day" | "week" | "month";
+
+/** The chart's step for a period of `days` days: days up to 92, weeks up to two years, then months. */
+export function bucketFor(days: number): Bucket {
+  if (days <= 92) return "day";
+  if (days <= 731) return "week";
+  return "month";
+}

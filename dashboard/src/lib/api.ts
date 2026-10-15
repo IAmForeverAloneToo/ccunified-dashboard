@@ -89,7 +89,10 @@ export interface Totals {
   cost_usd: number;
 }
 
-export interface Summary {
+/** A step of the Overview's chart: a day, a week (from Monday) or a month. */
+export type Bucket = "day" | "week" | "month";
+
+interface SummaryHead {
   timezone: string;
   today: string;
   from: string;
@@ -98,21 +101,32 @@ export interface Summary {
   tools: string[];
   /** Every model the dashboard has seen, in the order they first appeared. */
   models: string[];
+}
+
+export interface Summary extends SummaryHead {
+  /** What each `day` stands for: the day itself, or the first day of its week or month. */
+  bucket?: Bucket;
   by_day_machine: (Totals & { day: string; machine_id: string })[];
   by_day_model: (Totals & { day: string; model: string })[];
   by_day_source: (Totals & { day: string; source: string })[];
   /** Each machine's usage per tool over the whole period. */
   by_machine_source: (Totals & { machine_id: string; source: string })[];
-  /** Every row, when asked for with detail=1 (see filters.ts). */
-  detail?: SummaryDetail;
 }
 
-/** Rows of usage: [day, machine, tool, model, input, output, cache write, cache read, cost]; the middle three index the lists. */
+/** The answer to /summary?detail=1: the rows themselves, totaled and filtered in the browser (see filters.ts). */
+export interface DetailedSummary extends SummaryHead {
+  /** Over 92 days the rows are per week, and over two years per month. */
+  bucket: Bucket;
+  detail: SummaryDetail;
+}
+
+/** Rows of usage: [day, machine, tool, model, input, output, cache write, cache read, cost]; the first four index the lists. */
 export interface SummaryDetail {
+  days: string[];
   machines: string[];
   sources: string[];
   models: string[];
-  rows: [string, number, number, number, number, number, number, number, number][];
+  rows: [number, number, number, number, number, number, number, number, number][];
 }
 
 export interface Machine {

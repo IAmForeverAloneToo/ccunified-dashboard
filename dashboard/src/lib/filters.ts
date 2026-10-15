@@ -1,4 +1,4 @@
-import type { Summary, Totals } from "./api";
+import type { DetailedSummary, Summary, Totals } from "./api";
 import { modelFamily } from "./models";
 
 /**
@@ -71,13 +71,9 @@ function emptyTotals(): Totals {
   };
 }
 
-/**
- * The summary limited to the filters, worked out from its detail rows. A
- * summary without detail is returned as it is.
- */
-export function applyFilters(s: Summary, f: Filters): Summary {
+/** The totals of the rows that pass the filters. */
+export function applyFilters(s: DetailedSummary, f: Filters): Summary {
   const d = s.detail;
-  if (!d) return s;
   const ok = matcher(f);
   const byMachine = new Map<string, Totals & { day: string; machine_id: string }>();
   const byModel = new Map<string, Totals & { day: string; model: string }>();
@@ -98,7 +94,8 @@ export function applyFilters(s: Summary, f: Filters): Summary {
     map.set(key, t);
   };
   for (const row of d.rows) {
-    const [day, mi, si, ki] = row;
+    const [di, mi, si, ki] = row;
+    const day = d.days[di] ?? "";
     const machine = d.machines[mi] ?? "";
     const source = d.sources[si] ?? "";
     const model = d.models[ki] ?? "";
@@ -119,7 +116,13 @@ export function applyFilters(s: Summary, f: Filters): Summary {
     );
   }
   return {
-    ...s,
+    timezone: s.timezone,
+    today: s.today,
+    from: s.from,
+    to: s.to,
+    tools: s.tools,
+    models: s.models,
+    bucket: s.bucket,
     by_day_machine: [...byMachine.values()],
     by_day_model: [...byModel.values()],
     by_day_source: [...bySource.values()],
@@ -137,12 +140,10 @@ export interface Available {
 /**
  * What each list can offer: the machines, tools and models with usage in the
  * period's rows that match the picks in the other two lists. A list's own
- * picks don't narrow it, so several items can be ticked in one list. Null
- * when the summary has no detail rows.
+ * picks don't narrow it, so several items can be ticked in one list.
  */
-export function available(s: Summary, f: Filters): Available | null {
+export function available(s: DetailedSummary, f: Filters): Available {
   const d = s.detail;
-  if (!d) return null;
   const machines = new Set(f.machines);
   const tools = new Set(f.tools);
   const families = new Set(f.families);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { Summary } from "./api";
+import type { DetailedSummary, SummaryDetail } from "./api";
 import {
   allowedModels,
   applyFilters,
@@ -71,21 +71,19 @@ describe("filtering a summary", () => {
     to: "2026-10-02",
     tools: ["claude", "kimi"],
     models: ["claude-opus-5-5", "k3"],
-    by_day_machine: [],
-    by_day_model: [],
-    by_day_source: [],
-    by_machine_source: [],
+    bucket: "day",
     detail: {
+      days: ["2026-10-01", "2026-10-02"],
       machines: ["a", "b"],
       sources: ["claude", "kimi"],
       models: ["claude-opus-5-5", "k3"],
       rows: [
-        ["2026-10-01", 0, 0, 0, 10, 1, 0, 100, 1.5],
-        ["2026-10-01", 1, 1, 1, 20, 2, 0, 200, 0.5],
-        ["2026-10-02", 0, 1, 1, 5, 1, 0, 50, 0.25],
+        [0, 0, 0, 0, 10, 1, 0, 100, 1.5],
+        [0, 1, 1, 1, 20, 2, 0, 200, 0.5],
+        [1, 0, 1, 1, 5, 1, 0, 50, 0.25],
       ],
     },
-  } satisfies Summary;
+  } satisfies DetailedSummary;
 
   test("without filters, the totals are those of every row", () => {
     const s = applyFilters(summary, noFilters());
@@ -101,6 +99,20 @@ describe("filtering a summary", () => {
       cache_read_tokens: 50,
       cost_usd: 0.25,
     });
+  });
+
+  test("rows per week keep their week's first day and the bucket", () => {
+    const weekly = {
+      ...summary,
+      bucket: "week",
+      detail: { ...summary.detail, days: ["2026-09-28"], rows: summary.detail.rows.slice(0, 2) },
+    } satisfies DetailedSummary;
+    const s = applyFilters(weekly, noFilters());
+    expect(s.bucket).toBe("week");
+    expect(s.by_day_model.map((r) => [r.day, r.model, r.input_tokens])).toEqual([
+      ["2026-09-28", "claude-opus-5-5", 10],
+      ["2026-09-28", "k3", 20],
+    ]);
   });
 
   test("filters keep only matching rows, in every breakdown", () => {
@@ -192,30 +204,25 @@ describe("what each list offers", () => {
       to: "2026-10-02",
       tools: sources,
       models,
-      by_day_machine: [],
-      by_day_model: [],
-      by_day_source: [],
-      by_machine_source: [],
+      bucket: "day",
       detail: {
+        days: ["2026-10-01"],
         machines,
         sources,
         models,
-        rows: list.map(
-          ([m, t, k, n]) =>
-            [
-              "2026-10-01",
-              machines.indexOf(m),
-              sources.indexOf(t),
-              models.indexOf(k),
-              n,
-              0,
-              0,
-              0,
-              0,
-            ] as [string, number, number, number, number, number, number, number, number],
-        ),
+        rows: list.map(([m, t, k, n]): SummaryDetail["rows"][number] => [
+          0,
+          machines.indexOf(m),
+          sources.indexOf(t),
+          models.indexOf(k),
+          n,
+          0,
+          0,
+          0,
+          0,
+        ]),
       },
-    } satisfies Summary;
+    } satisfies DetailedSummary;
   };
   // desk uses Claude Code (Opus) and Kimi; laptop uses Claude Code (Sonnet); idle has only empty rows.
   const s = rows(
@@ -227,9 +234,9 @@ describe("what each list offers", () => {
   const offer = (f: Partial<ReturnType<typeof noFilters>>) => {
     const a = available(s, { ...noFilters(), ...f });
     return {
-      machines: [...(a?.machines ?? [])].sort(),
-      tools: [...(a?.tools ?? [])].sort(),
-      models: [...(a?.models ?? [])].sort(),
+      machines: [...a.machines].sort(),
+      tools: [...a.tools].sort(),
+      models: [...a.models].sort(),
     };
   };
 
@@ -271,9 +278,5 @@ describe("what each list offers", () => {
       tools: ["claude"],
       models: [],
     });
-  });
-
-  test("without detail rows, nothing is narrowed", () => {
-    expect(available({ ...s, detail: undefined }, noFilters())).toBeNull();
   });
 });

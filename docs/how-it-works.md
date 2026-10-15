@@ -178,7 +178,7 @@ learns of a release as soon as a machine uploads while running it.
 | `GET /api/login-params`, `POST /api/login`, `POST /api/logout` | Log in (with the salt the browser needs to derive the login key) and out | anyone |
 | `GET /api/me`, `POST /api/me/password` | Who's logged in; change your password | any user |
 | `POST /api/me/2fa/setup`, `…/enable`, `…/disable`, `…/recovery-codes` | Two-factor login | any user |
-| `GET /api/summary?days=N` or `?from=&to=` | Usage per day by machine, by model and by tool, and each machine's usage per tool; with `detail=1`, every row (day, machine, tool, model), which the Overview filters in the browser | viewer |
+| `GET /api/summary?days=N`, `?from=&to=` or `?all=1` | Usage per day by machine, by model and by tool, and each machine's usage per tool; `all=1` starts at the first day with usage. With `detail=1`, the rows themselves instead (day, machine, tool, model), which the Overview totals and filters in the browser; over 92 days they are summed per week, and over two years per month, as the chart shows them | viewer |
 | `GET /api/usage-days?from=&to=` | The days in a range that have any usage (for the date picker), optionally only for some machines, tools and models (repeated `machine`, `source`, `model`) | viewer |
 | `GET /api/machines` | Machines, their status and the tools each has reported | viewer |
 | `PATCH /api/machines/:id`, `DELETE /api/machines/:id` | Rename, revoke | admin |
@@ -211,14 +211,24 @@ dashboard runs the same Worker.
 
 ## Limits and cost
 
-Everything fits Cloudflare's free plan:
+Everything fits Cloudflare's free plan. Measured with 10 machines and a year
+of their usage:
 
 - **Requests:** 10 machines uploading every 15 minutes make under 1,000
   requests a day; the free plan allows 100,000.
-- **Storage:** a year of data for 10 machines is about 15,000 rows, a few
-  megabytes; the free plan allows 5 GB.
-- **CPU:** the free plan allows about 10 ms per request, which is why password
-  stretching happens in the browser.
+- **Storage:** a year of data for 10 machines is about 15,000 rows, about
+  4 MB; the free plan allows 5 GB.
+- **Database reads:** an upload reads about 150 rows. The Overview reads one
+  row per day, machine, tool and model in the period (about 1,200 for 30
+  days), and about twice that when it sums a long period per week or month
+  (about 29,000 for a year). Unchanged data costs a handful of rows, as the
+  dashboard asks with an ETag and gets "not modified". It refreshes every
+  minute up to 92 days and every 10 minutes beyond, so even a tab left open
+  on a year all day stays well under the free plan's 5 million rows a day.
+- **CPU:** the free plan allows about 10 ms per request. Password stretching
+  happens in the browser, and so does totaling and filtering the Overview's
+  rows; over 92 days the Worker sends them per week or month, so a year takes
+  about 5 ms.
 
 ## Not yet
 

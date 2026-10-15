@@ -1,5 +1,7 @@
 import {
   api,
+  type Bucket,
+  type DetailedSummary,
   getCached,
   type Machine,
   type MachinesResponse,
@@ -59,7 +61,8 @@ const MEASURE_TITLE: Record<MeasureKey, string> = {
 };
 
 /** The longest range the API serves (about ten years). */
-const ALL_DAYS = 3660;
+const REFRESH_MS = 60_000;
+const LONG_REFRESH_MS = 10 * 60_000;
 
 const totalTokens = (t: Totals) =>
   t.input_tokens + t.output_tokens + t.cache_creation_tokens + t.cache_read_tokens;
@@ -111,22 +114,7 @@ export function machineSeries(machines: Machine[]): Map<string, Series> {
   return map;
 }
 
-/** "All" starts at the first day with usage, not at the API's ten-year limit. */
-function fromFirstUsage(s: Summary): Summary {
-  let first = s.to;
-  for (const r of s.by_day_machine) if (r.day < first) first = r.day;
-  return { ...s, from: first };
-}
-
-// ---------- Time buckets ----------
-
-type Bucket = "day" | "week" | "month";
-
-function bucketFor(days: number): Bucket {
-  if (days <= 92) return "day";
-  if (days <= 731) return "week";
-  return "month";
-}
+// ---------- Time buckets (the API picks one for the period) ----------
 
 function bucketStart(date: string, bucket: Bucket): string {
   if (bucket === "day") return date;
@@ -283,7 +271,9 @@ export async function overviewPage(ctx: PageContext) {
     models,
   );
 
-  let summary: Summary | undefined;
+  let summary: DetailedSummary | undefined;
+  /** When the data was last asked for. */
+  let loadedAt = 0;
   let machines: Machine[] = [];
   let pending: PairingRequest[] = [];
 
@@ -517,20 +507,23 @@ export async function overviewPage(ctx: PageContext) {
   paintPeriod();
 
   async function load() {
+    loadedAt = Date.now();
     chartBox.classList.add("loading");
     try {
       const path =
         state.range === "custom"
           ? `/summary?from=${state.from}&to=${state.to}&detail=1`
-          : `/summary?days=${state.range === "all" ? ALL_DAYS : Number(state.range)}&detail=1`;
+          : state.range === "all"
+            ? "/summary?all=1&detail=1"
+            : `/summary?days=${Number(state.range)}&detail=1`;
       const [s, m, p] = await Promise.all([
-        getCached<Summary>(path),
+        getCached<DetailedSummary>(path),
         api<MachinesResponse>("/machines"),
         ctx.me.role === "admin"
           ? api<{ requests: PairingRequest[] }>("/pairing").then((r) => r.requests)
           : Promise.resolve([] as PairingRequest[]),
       ]);
-      summary = state.range === "all" ? fromFirstUsage(s) : s;
+      summary = s;
       machines = m.machines;
       pending = p;
       draw();
@@ -670,8 +663,7 @@ export async function overviewPage(ctx: PageContext) {
   }
 
   function drawChart(s: Summary) {
-    const days = Math.round((Date.parse(s.to) - Date.parse(s.from)) / 86_400_000) + 1;
-    const bucket = bucketFor(days);
+    const bucket = s.bucket ?? "day";
     const { series, keyOf } = seriesFor(s);
     const rows =
       state.split === "machine"
@@ -956,7 +948,7 @@ export async function overviewPage(ctx: PageContext) {
     );
   }
 
-  // Redraw the chart when its width changes; refresh data every minute while visible.
+  // Redraw the chart when its width changes; refresh the data while visible.
   let lastWidth = 0;
   const resize = new ResizeObserver(() => {
     if (chartBox.clientWidth !== lastWidth && summary && !state.tableView) {
@@ -965,11 +957,17 @@ export async function overviewPage(ctx: PageContext) {
     }
   });
   resize.observe(chartBox);
-  // Refresh while the period includes today; past days don't change.
+  // Refresh while the period includes today; past days don't change. Every
+  // minute up to 92 days; longer periods (weeks or months on the chart) read
+  // many more rows each time, so every 10 minutes, to stay well within the
+  // database reads of Cloudflare's free plan.
   const timer = window.setInterval(() => {
     const live = state.range !== "custom" || !summary || state.to >= summary.today;
-    if (document.visibilityState === "visible" && live) void load().catch(() => undefined);
-  }, 60_000);
+    const every = summary && summary.bucket !== "day" ? LONG_REFRESH_MS : REFRESH_MS;
+    if (document.visibilityState === "visible" && live && Date.now() - loadedAt >= every - 5_000) {
+      void load().catch(() => undefined);
+    }
+  }, REFRESH_MS);
 
   await load();
   return () => {

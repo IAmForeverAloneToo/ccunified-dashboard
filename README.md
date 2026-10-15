@@ -115,7 +115,9 @@ All commands and options are in the **[command reference](docs/commands.md)**.
 
 Everything fits Cloudflare's free plan with room to spare: ten machines
 syncing every 15 minutes make under 1,000 requests a day (the limit is
-100,000), and a year of their data is a few megabytes of database.
+100,000), and a year of their data is a few megabytes of database. See
+[Limits and cost](docs/how-it-works.md#limits-and-cost) for the measured
+numbers.
 
 The costs on the dashboard are **estimates at API prices**, as calculated by
 ccusage. With a subscription (Claude, ChatGPT, Copilot, …) you aren't billed

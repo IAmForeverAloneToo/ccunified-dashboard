@@ -3,6 +3,7 @@
  * data: 90 days of usage for four machines, with some days missing.
  */
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { day as formatDay } from "../dashboard/src/lib/format";
 import { modelFamily } from "../dashboard/src/lib/models";
 import { toolName } from "../dashboard/src/lib/tools";
 import { startDemo } from "../worker/scripts/demo.mjs";
@@ -432,6 +433,49 @@ test("Settings checks for updates on request and says when GitHub couldn't be re
     await check.click();
     await expect(status).toContainText("It's up to date.");
   }
+});
+
+test("long periods: weeks that add up, All from the first usage, refresh every 10 minutes", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await logIn(page);
+  const today = await dashboardToday(page);
+  await page.goto(new URL("/?range=365", demo.url).href);
+  await expect(page.locator("#chart-title")).toHaveText("Weekly tokens by machine");
+  await expect(tile(page, "Tokens")).toHaveText(
+    compact(await apiTokens(page, addDays(today, -364), today)),
+  );
+  await page.getByRole("button", { name: "Show as table" }).click();
+  await expect(page.locator(".chart tbody th").first()).toHaveText(/^Week of /);
+  await page.getByRole("button", { name: "Show as chart" }).click();
+
+  // A long period refreshes every 10 minutes; up to 92 days, every minute.
+  const loads: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/summary?")) loads.push(r.url());
+  });
+  await page.clock.runFor(5 * 60_000);
+  expect(loads).toEqual([]);
+  await page.clock.runFor(5.5 * 60_000);
+  await expect.poll(() => loads.length).toBe(1);
+  expect(loads[0]).toContain("days=365");
+  await choose(page, "range", "30");
+  await expect(page.locator("#chart-title")).toHaveText("Daily tokens by machine");
+  expect(loads).toHaveLength(2);
+  await page.clock.runFor(2 * 60_000);
+  await expect.poll(() => loads.length).toBeGreaterThanOrEqual(3);
+  expect(loads[2]).toContain("days=30");
+
+  // All starts at the first day with usage.
+  await page.goto(new URL("/?range=all", demo.url).href);
+  const first = await page.evaluate(
+    async () => (await (await fetch("/api/summary?all=1")).json()).from as string,
+  );
+  expect(first < addDays(today, -60)).toBe(true);
+  await expect(page.locator("#tz-note")).toHaveText(
+    new RegExp(`^${formatDay(first, "long")} – ${formatDay(today, "long")}`),
+  );
 });
 
 test("model families keep their colors in every period", async ({ page }) => {

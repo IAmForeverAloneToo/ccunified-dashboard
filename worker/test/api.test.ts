@@ -21,6 +21,28 @@ const model = (name: string, n: number, cost: number) => ({
   cost_usd: cost,
 });
 
+/** The answer to /api/summary?detail=1. */
+interface Detailed {
+  bucket: string;
+  detail: {
+    days: string[];
+    machines: string[];
+    sources: string[];
+    models: string[];
+    rows: [number, number, number, number, number, number, number, number, number][];
+  };
+}
+
+/** Detail rows as "day machine tool model input", sorted. */
+function readRows({ detail: d }: Detailed): string[] {
+  return d.rows
+    .map(
+      ([t, m, s, k, input]) =>
+        `${d.days[t]} ${d.machines[m]} ${d.sources[s]} ${d.models[k]} ${input}`,
+    )
+    .sort();
+}
+
 describe("access control", () => {
   test.each(["/api/me", "/api/summary", "/api/machines", "/api/settings"])(
     "%s requires a login",
@@ -208,23 +230,17 @@ describe("summary", () => {
     expect(tools[b.id]).toEqual(["codex"]);
   });
 
-  test("detail=1 adds every row, for filtering in the browser", async () => {
+  test("detail=1 answers with the rows, for totaling and filtering in the browser", async () => {
     // The rows uploaded by the previous test.
     const res = await w.fetch("/api/summary?from=2026-08-01&to=2026-08-02&detail=1", {
       cookie: viewer.cookie,
     });
-    const body = (await res.json()) as {
-      detail: {
-        machines: string[];
-        sources: string[];
-        models: string[];
-        rows: [string, number, number, number, number, number, number, number, number][];
-      };
-    };
-    const { machines, sources, models, rows } = body.detail;
-    const readable = rows
-      .map(([day, m, s, k, input]) => `${day} ${machines[m]} ${sources[s]} ${models[k]} ${input}`)
-      .sort();
+    const body = (await res.json()) as Detailed;
+    expect(body.bucket).toBe("day");
+    // The browser works out the totals from the rows.
+    expect(body).not.toHaveProperty("by_day_machine");
+    const readable = readRows(body);
+    const machines = body.detail.machines;
     const [a, b] = machines.length === 2 ? machines : ["", ""];
     expect(new Set(machines).size).toBe(2);
     expect(readable).toEqual(
@@ -235,13 +251,102 @@ describe("summary", () => {
         `2026-08-02 ${b} codex gpt-5.5 1`,
       ].sort(),
     );
-    expect(rows[0]).toHaveLength(9);
-    // Without detail, no rows; and the two answers aren't confused by caching.
+    expect(body.detail.rows[0]).toHaveLength(9);
+    // Without detail, the totals; and the two answers aren't confused by caching.
     const plain = await w.fetch("/api/summary?from=2026-08-01&to=2026-08-02", {
       cookie: viewer.cookie,
     });
-    expect(await plain.json()).not.toHaveProperty("detail");
+    const plainBody = await plain.json();
+    expect(plainBody).not.toHaveProperty("detail");
+    expect(plainBody).toHaveProperty("by_day_machine");
     expect(plain.headers.get("etag")).not.toBe(res.headers.get("etag"));
+  });
+
+  describe("long periods", () => {
+    // Usage in 2023 and 2024, before anything else these tests upload.
+    let id = "";
+    beforeAll(async () => {
+      id = (await w.createMachine({ name: "long-ago" })).id;
+      for (const [day, n] of [
+        ["2023-01-04", 1], // a Wednesday
+        ["2023-01-08", 2], // the Sunday of that week
+        ["2023-01-09", 4], // the next Monday
+        ["2023-02-20", 8],
+        ["2024-06-30", 16],
+      ] as const) {
+        await w.sql(
+          `INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens,
+             cache_creation_tokens, cache_read_tokens, cost_usd, updated_at)
+           VALUES (?1, 'claude', ?2, 'opus', ?3, 0, 0, 0, ?4, 0)`,
+          id,
+          day,
+          n,
+          n / 10,
+        );
+      }
+    });
+    const detailed = async (query: string) =>
+      (await (
+        await w.fetch(`/api/summary?${query}&detail=1`, { cookie: viewer.cookie })
+      ).json()) as Detailed;
+
+    test("up to 92 days, rows per day", async () => {
+      const body = await detailed("from=2023-01-01&to=2023-04-02");
+      expect(body.bucket).toBe("day");
+      expect(readRows(body)).toEqual([
+        `2023-01-04 ${id} claude opus 1`,
+        `2023-01-08 ${id} claude opus 2`,
+        `2023-01-09 ${id} claude opus 4`,
+        `2023-02-20 ${id} claude opus 8`,
+      ]);
+    });
+
+    test("over 92 days, rows per week, from Monday", async () => {
+      const body = await detailed("from=2023-01-01&to=2023-04-03");
+      expect(body.bucket).toBe("week");
+      expect(readRows(body)).toEqual([
+        `2023-01-02 ${id} claude opus 3`,
+        `2023-01-09 ${id} claude opus 4`,
+        `2023-02-20 ${id} claude opus 8`,
+      ]);
+      const cost = body.detail.rows.find((r) => body.detail.days[r[0]] === "2023-01-02")?.[8];
+      expect(cost).toBeCloseTo(0.3);
+    });
+
+    test("over two years, rows per month", async () => {
+      const body = await detailed("from=2023-01-01&to=2025-01-31");
+      expect(body.bucket).toBe("month");
+      expect(readRows(body)).toEqual([
+        `2023-01-01 ${id} claude opus 7`,
+        `2023-02-01 ${id} claude opus 8`,
+        `2024-06-01 ${id} claude opus 16`,
+      ]);
+    });
+
+    test("without detail, totals stay per day", async () => {
+      const res = await w.fetch("/api/summary?from=2023-01-01&to=2023-06-30", {
+        cookie: viewer.cookie,
+      });
+      const body = (await res.json()) as { by_day_machine: { day: string }[] };
+      expect(body.by_day_machine.map((r) => r.day)).toEqual([
+        "2023-01-04",
+        "2023-01-08",
+        "2023-01-09",
+        "2023-02-20",
+      ]);
+    });
+
+    test("all=1 starts at the first day with usage", async () => {
+      const res = await w.fetch("/api/summary?all=1&detail=1", { cookie: viewer.cookie });
+      const body = (await res.json()) as Detailed & { from: string; to: string; today: string };
+      expect(body.from).toBe("2023-01-04");
+      expect(body.to).toBe(body.today);
+      expect(body.bucket).toBe("month");
+      expect(body.detail.days).toContain("2023-01-01");
+      const tenYears = await w.fetch("/api/summary?days=3660&detail=1", { cookie: viewer.cookie });
+      expect(tenYears.headers.get("etag")).not.toBe(res.headers.get("etag"));
+      expect(((await tenYears.json()) as { from: string }).from).not.toBe("2023-01-04");
+    });
   });
 
   test("defaults to the last 30 days in the dashboard's time zone", async () => {

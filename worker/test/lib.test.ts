@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { fetchLatestRelease } from "../src/lib/releases";
 import { compareVersions } from "../src/lib/semver";
-import { addDays, daysBetween, isValidTimezone, todayIn } from "../src/lib/time";
+import { addDays, bucketFor, daysBetween, isValidTimezone, todayIn } from "../src/lib/time";
 
 describe("compareVersions", () => {
   test.each([
@@ -65,5 +65,19 @@ describe("fetchLatestRelease", () => {
             }),
           )) as unknown as typeof fetch;
     expect(await fetchLatestRelease(pageOnly)).toEqual({ version: "1.2.3" });
+  });
+});
+
+describe("bucketFor", () => {
+  test.each([
+    [1, "day"],
+    [92, "day"],
+    [93, "week"],
+    [365, "week"],
+    [731, "week"],
+    [732, "month"],
+    [3660, "month"],
+  ])("%i days: %s", (days, bucket) => {
+    expect(bucketFor(days)).toBe(bucket);
   });
 });
