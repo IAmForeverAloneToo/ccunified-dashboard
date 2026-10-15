@@ -32,8 +32,9 @@ export async function approvePage(ctx: PageContext) {
   function fillOwners() {
     const keep = owner.value;
     const dep = department.value;
-    const people = users.filter((u) =>
-      dep === "" ? true : u.departments.some((d) => d.id === dep),
+    // People with a role in the department, and admins (who can own any machine).
+    const people = users.filter(
+      (u) => dep === "" || u.role === "admin" || u.departments.some((d) => d.id === dep),
     );
     owner.replaceChildren(
       h("option", { value: "" }, "Nobody: a shared machine"),

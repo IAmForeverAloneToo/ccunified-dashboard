@@ -1001,6 +1001,46 @@ test.describe("access control", () => {
     await expect(taylor).toHaveCount(0);
   });
 
+  test("the access form offers the department roles that still mean something", async ({
+    page,
+  }) => {
+    await logIn(page);
+    await page.goto(new URL("/users", demo.url).href);
+    const form = page.locator("form").filter({ has: page.getByLabel("Username") });
+    const role = form.getByLabel("Dashboard-wide role");
+    const engineering = form.getByLabel("Role in Engineering");
+    // With departments, new people start without a dashboard-wide role.
+    await expect(role).toHaveValue("");
+    await expect(engineering.locator("option")).toHaveText([
+      "No role",
+      "Member",
+      "Viewer",
+      "Manager",
+    ]);
+    await engineering.selectOption("manager");
+    // A viewer of everything already sees every machine.
+    await role.selectOption("viewer");
+    await expect(engineering.locator("option")).toHaveText([
+      "No role",
+      "Member: can own its machines",
+      "Manager",
+    ]);
+    await expect(engineering).toHaveValue("manager");
+    // Admins need no department roles.
+    await role.selectOption("admin");
+    await expect(engineering).toBeHidden();
+    await expect(form.getByText("Admins see and manage every department")).toBeVisible();
+    await role.selectOption("");
+    await expect(engineering).toHaveValue("manager");
+    // Someone with no access at all isn't added.
+    await engineering.selectOption("");
+    await form.getByLabel("Username").fill("nobody-at-all");
+    await form.getByRole("button", { name: "Add user…" }).click();
+    await expect(
+      form.getByText("Give them a dashboard-wide role or a role in a department."),
+    ).toBeVisible();
+  });
+
   test("admins manage departments, and machines' departments and owners", async ({ page }) => {
     await logIn(page);
     await page.goto(new URL("/departments", demo.url).href);
@@ -1042,8 +1082,10 @@ test.describe("access control", () => {
 
     await machine("Build server").getByRole("button", { name: "Edit" }).click();
     const edit = page.getByRole("dialog");
+    // People in Engineering, and admins, who can own any machine.
     await expect(edit.getByLabel("Owner").locator("option")).toHaveText([
       "Nobody: a shared machine",
+      "demo",
       "morgan",
       "riley",
     ]);

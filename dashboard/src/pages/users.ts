@@ -76,9 +76,44 @@ interface Access {
 }
 
 /**
+ * The department roles worth offering: admins already see and manage every
+ * department, viewers already see every machine (a role can still make them
+ * a manager, or let them own machines), managers give only Viewer or Member.
+ */
+function departmentChoices(adminCaller: boolean, role: DashboardRole | null): [string, string][] {
+  if (!adminCaller) {
+    return [
+      ["", "No role"],
+      ["member", "Member"],
+      ["viewer", "Viewer"],
+    ];
+  }
+  if (role === "viewer") {
+    return [
+      ["", "No role"],
+      ["member", "Member: can own its machines"],
+      ["manager", "Manager"],
+    ];
+  }
+  return [
+    ["", "No role"],
+    ["member", "Member"],
+    ["viewer", "Viewer"],
+    ["manager", "Manager"],
+  ];
+}
+
+const DEPARTMENT_HINT: Record<"none" | "viewer" | "managerCaller", string> = {
+  none: "Members see the machines they own; viewers see all of its machines; managers also manage its machines and people.",
+  viewer:
+    "They already see every machine. A department role can make them its manager, or let them own its machines.",
+  managerCaller: "Members see the machines they own; viewers see all of its machines.",
+};
+
+/**
  * Fields for choosing someone's access. Admins pick a dashboard-wide role and
- * any role in any department; managers pick Viewer or Member in the
- * departments they manage.
+ * the department roles that still mean something with it; managers pick
+ * Viewer or Member in the departments they manage.
  */
 function accessFields(opts: {
   admin: boolean;
@@ -93,21 +128,53 @@ function accessFields(opts: {
     h("option", { value: "admin" }, "Admin: manages everything"),
   );
   role.value = opts.initial.role ?? "";
-  const roleOptions: [string, string][] = [
-    ["", "No role"],
-    ["member", "Member"],
-    ["viewer", "Viewer"],
-    ...(opts.admin ? ([["manager", "Manager"]] as [string, string][]) : []),
-  ];
+  const currentRole = () => (opts.admin ? ((role.value || null) as DashboardRole | null) : null);
   const selects = opts.departments.map((d) => {
-    const select = h(
-      "select",
-      { "aria-label": `Role in ${d.name}` },
-      roleOptions.map(([value, label]) => h("option", { value }, label)),
-    );
-    select.value = opts.initial.departments.find((x) => x.id === d.id)?.role ?? "";
-    return { id: d.id, name: d.name, select };
+    const select = h("select", { "aria-label": `Role in ${d.name}` });
+    return {
+      id: d.id,
+      name: d.name,
+      select,
+      wanted: opts.initial.departments.find((x) => x.id === d.id)?.role ?? "",
+    };
   });
+  const hint = h("p", { class: "hint" });
+  const adminNote = h(
+    "p",
+    { class: "secondary small" },
+    "Admins see and manage every department, and can own machines in any of them.",
+  );
+  const fieldset =
+    selects.length > 0
+      ? h(
+          "fieldset",
+          { class: "access-departments" },
+          h("legend", null, opts.admin ? "Roles in departments" : "Role in your departments"),
+          hint,
+          selects.map((x) =>
+            h("label", { class: "access-row" }, h("span", null, x.name), x.select),
+          ),
+        )
+      : null;
+
+  /** Offers the department roles that fit the dashboard-wide role, keeping picks that still do. */
+  function paint() {
+    const r = currentRole();
+    const choices = departmentChoices(opts.admin, r);
+    for (const x of selects) {
+      const keep = x.select.value || x.wanted;
+      x.select.replaceChildren(...choices.map(([value, label]) => h("option", { value }, label)));
+      x.select.value = choices.some(([value]) => value === keep) ? keep : "";
+      x.wanted = "";
+    }
+    hint.textContent =
+      DEPARTMENT_HINT[!opts.admin ? "managerCaller" : r === "viewer" ? "viewer" : "none"];
+    if (fieldset) fieldset.hidden = r === "admin";
+    adminNote.hidden = r !== "admin";
+  }
+  role.addEventListener("change", paint);
+  paint();
+
   const element = h(
     "div",
     { class: "stack" },
@@ -120,32 +187,22 @@ function accessFields(opts: {
           role,
         )
       : null,
-    selects.length > 0
-      ? h(
-          "fieldset",
-          { class: "access-departments" },
-          h("legend", null, opts.admin ? "Roles in departments" : "Role in your departments"),
-          h(
-            "p",
-            { class: "hint" },
-            opts.admin
-              ? "Members see the machines they own; viewers see all of its machines; managers also manage its machines and people."
-              : "Members see the machines they own; viewers see all of its machines.",
-          ),
-          selects.map((x) =>
-            h("label", { class: "access-row" }, h("span", null, x.name), x.select),
-          ),
-        )
-      : h("p", { class: "secondary small" }, "There are no departments yet."),
+    opts.admin ? adminNote : null,
+    fieldset ?? h("p", { class: "secondary small" }, "There are no departments yet."),
   );
   return {
     element,
     value(): Access {
+      const r = currentRole();
       return {
-        role: opts.admin ? ((role.value || null) as DashboardRole | null) : null,
-        departments: selects
-          .filter((x) => x.select.value !== "")
-          .map((x) => ({ id: x.id, role: x.select.value as DepartmentRole })),
+        role: r,
+        // Admins need no department roles.
+        departments:
+          r === "admin"
+            ? []
+            : selects
+                .filter((x) => x.select.value !== "")
+                .map((x) => ({ id: x.id, role: x.select.value as DepartmentRole })),
       };
     },
   };
@@ -172,11 +229,13 @@ export async function usersPage(ctx: PageContext) {
 
   // ---- Add user ----
   const username = h("input", { autocomplete: "off", spellcheck: false, autocapitalize: "none" });
-  let addAccess = accessFields({
-    admin,
-    departments: grantable,
-    initial: { role: admin ? "viewer" : null, departments: [] },
+  // New users start with no dashboard-wide role once there are departments
+  // to give them a role in.
+  const newAccess = (): Access => ({
+    role: admin && departments.length === 0 ? "viewer" : null,
+    departments: [],
   });
+  let addAccess = accessFields({ admin, departments: grantable, initial: newAccess() });
   const accessSlot = h("div", null, addAccess.element);
   const addError = h("p", { class: "field-error", role: "alert" });
   const addButton = h("button", { type: "submit", class: "primary" }, "Add user…");
@@ -206,8 +265,10 @@ export async function usersPage(ctx: PageContext) {
       return;
     }
     const access = addAccess.value();
-    if (!admin && access.departments.length === 0) {
-      addError.textContent = "Give them a role in at least one of your departments.";
+    if (access.role === null && access.departments.length === 0) {
+      addError.textContent = admin
+        ? "Give them a dashboard-wide role or a role in a department."
+        : "Give them a role in at least one of your departments.";
       return;
     }
     const key = await askTemporaryPassword(
@@ -223,11 +284,7 @@ export async function usersPage(ctx: PageContext) {
       });
       toast(`Added ${username.value}`);
       addForm.reset();
-      addAccess = accessFields({
-        admin,
-        departments: grantable,
-        initial: { role: admin ? "viewer" : null, departments: [] },
-      });
+      addAccess = accessFields({ admin, departments: grantable, initial: newAccess() });
       accessSlot.replaceChildren(addAccess.element);
       await load();
     } catch (e) {

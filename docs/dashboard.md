@@ -39,6 +39,12 @@ Everyone sees the machines they own, and a machine has at most one owner
 (none makes it shared). Someone with only department roles doesn't see the
 Settings page.
 
+Department roles mostly matter for people without a dashboard-wide role. An
+admin needs none. A viewer of everything already sees every machine, so for
+them a department role only does something as **Manager** (to manage that
+department) or **Member** (to own its machines); the Users page offers just
+those.
+
 | | Member | Department viewer | Manager | Viewer | Admin |
 |---|---|---|---|---|---|
 | See their own machines | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -176,10 +182,10 @@ lists come in pages of 50.
 
 Admins, and managers for their departments' machines, can **Edit** a machine
 (its name, department and owner) and **Revoke** it. The owner is someone with
-a role in the machine's department; admins can give a machine without a
-department any owner. The *Add a machine* card shows the install commands and
-your dashboard's address. Machine statuses and removing machines are explained
-in [Add machines](adding-machines.md#machine-status).
+a role in the machine's department, or an admin; admins can give a machine
+without a department any owner. The *Add a machine* card shows the install
+commands and your dashboard's address. Machine statuses and removing machines
+are explained in [Add machines](adding-machines.md#machine-status).
 
 ## Approvals (admins and managers)
 
@@ -206,7 +212,10 @@ manages. They can't make anyone an admin, a viewer of everything or a manager.
 - **Add a user:** choose a username (3–32 letters, digits, dots, dashes or
   underscores; it can't be changed later), their access, and a temporary
   password. Give them the password privately; they must choose their own when
-  they first log in. Managers add people to their departments, as viewers or
+  they first log in. Once there are departments, new people start without a
+  dashboard-wide role, so you pick their department roles; the form only
+  offers the department roles that mean something with the dashboard-wide
+  role you pick. Managers add people to their departments, as viewers or
   members.
 - **Access…** changes someone's dashboard-wide role (admins) and their roles
   in departments. Changing the dashboard-wide role signs them out, so it

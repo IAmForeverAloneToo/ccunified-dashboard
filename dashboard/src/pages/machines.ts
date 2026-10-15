@@ -438,7 +438,10 @@ export async function machinesPage(ctx: PageContext) {
     const fillOwners = () => {
       const keep = owner.value || machine.owner?.id || "";
       const dep = department.value;
-      const people = users.filter((u) => dep === "" || u.departments.some((d) => d.id === dep));
+      // People with a role in the department, and admins (who can own any machine).
+      const people = users.filter(
+        (u) => dep === "" || u.role === "admin" || u.departments.some((d) => d.id === dep),
+      );
       owner.replaceChildren(
         h("option", { value: "" }, "Nobody: a shared machine"),
         ...people.map((u) => h("option", { value: u.id }, u.username)),
@@ -462,7 +465,7 @@ export async function machinesPage(ctx: PageContext) {
           h(
             "span",
             { class: "hint" },
-            "Someone with a role in its department. Owners always see their machines.",
+            "Someone with a role in its department, or an admin. Owners always see their machines.",
           ),
           owner,
         ),

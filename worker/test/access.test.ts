@@ -484,6 +484,30 @@ describe("who manages which users", () => {
     ]);
   });
 
+  test("admins own machines in any department; losing the role gives those up", async () => {
+    // An admin with no role in Sales.
+    const boss = await w.createUser({ username: `boss-${x.tag}`, role: "admin" });
+    const own = await send("PATCH", `/api/machines/${x.machines.b1.id}`, x.people.admin, {
+      owner_id: boss.id,
+    });
+    expect(own.status).toBe(200);
+    // Changing their department roles keeps it; becoming a viewer gives it up.
+    const keep = await send("PATCH", `/api/users/${boss.id}`, x.people.admin, {
+      departments: [{ id: x.A, role: "manager" }],
+    });
+    expect(keep.status).toBe(200);
+    expect(await w.sql("SELECT owner_id FROM machines WHERE id = ?1", x.machines.b1.id)).toEqual([
+      { owner_id: boss.id },
+    ]);
+    const demote = await send("PATCH", `/api/users/${boss.id}`, x.people.admin, {
+      role: "viewer",
+    });
+    expect(demote.status).toBe(200);
+    expect(await w.sql("SELECT owner_id FROM machines WHERE id = ?1", x.machines.b1.id)).toEqual([
+      { owner_id: null },
+    ]);
+  });
+
   test("admins give dashboard-wide roles; the last admin stays", async () => {
     const res = await send("PATCH", `/api/users/${x.people.nobody.id}`, x.people.admin, {
       role: "viewer",

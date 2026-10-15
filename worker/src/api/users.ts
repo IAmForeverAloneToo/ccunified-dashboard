@@ -113,15 +113,22 @@ function setRoles(db: D1Database, userId: string, list: DepartmentRoles): D1Prep
         .prepare("INSERT INTO department_roles (department_id, user_id, role) VALUES (?1, ?2, ?3)")
         .bind(d.id, userId, d.role),
     ),
-    // Owners need a role in their machine's department.
-    db
-      .prepare(
-        `UPDATE machines SET owner_id = NULL
-          WHERE owner_id = ?1 AND department_id IS NOT NULL
-            AND department_id NOT IN (SELECT value FROM json_each(?2))`,
-      )
-      .bind(userId, JSON.stringify(list.map((d) => d.id))),
   ];
+}
+
+/**
+ * Gives up the machines a user may no longer own, after their roles changed:
+ * owners need a role in the machine's department, unless they're an admin.
+ */
+function dropOwnership(db: D1Database, userId: string): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE machines SET owner_id = NULL
+        WHERE owner_id = ?1 AND department_id IS NOT NULL
+          AND (SELECT role FROM users WHERE id = ?1) IS NOT 'admin'
+          AND department_id NOT IN (SELECT department_id FROM department_roles WHERE user_id = ?1)`,
+    )
+    .bind(userId);
 }
 
 /**
@@ -238,6 +245,8 @@ export async function updateUser(c: Context<AppEnv>): Promise<Response> {
     writes.push(db.prepare("UPDATE users SET role = ?1 WHERE id = ?2").bind(body.role, target.id));
   }
   if (body.departments) writes.push(...setRoles(db, target.id, body.departments));
+  // After the new roles are written.
+  if (body.role !== undefined || body.departments) writes.push(dropOwnership(db, target.id));
   if (body.disabled !== undefined) {
     writes.push(
       db

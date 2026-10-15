@@ -73,7 +73,8 @@ export function canManageUser(
 
 /**
  * Checks that `ownerId` may own a machine in `departmentId`: someone with a
- * role there, or, for a machine without a department, anyone (admins only).
+ * role there or an admin, or, for a machine without a department, anyone
+ * (picked by admins only).
  */
 export async function checkOwner(
   db: D1Database,
@@ -85,12 +86,14 @@ export async function checkOwner(
   const row = await db
     .prepare(
       `SELECT (SELECT 1 FROM users WHERE id = ?1) AS user,
+              (SELECT role FROM users WHERE id = ?1) AS role,
               (SELECT 1 FROM department_roles WHERE user_id = ?1 AND department_id = ?2) AS member`,
     )
     .bind(ownerId, departmentId)
-    .first<{ user: number | null; member: number | null }>();
+    .first<{ user: number | null; role: string | null; member: number | null }>();
   if (!row?.user) fail(400, "unknown_owner");
-  if (departmentId === null ? !isAdmin(u) : !row.member) fail(409, "owner_not_in_department");
+  const allowed = departmentId === null ? isAdmin(u) : row.member === 1 || row.role === "admin";
+  if (!allowed) fail(409, "owner_not_in_department");
 }
 
 /** Checks that a department exists. */
