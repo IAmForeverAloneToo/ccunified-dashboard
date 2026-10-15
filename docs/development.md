@@ -134,7 +134,7 @@ OpenCode's on the second). Screenshots go to `e2e/test-results/`.
 
 The screenshots in `docs/images/` show the demo data. Run `npm run demo`, then
 capture the Overview (30 days, split by machine, and split by tool), the
-Models filter open, the Machines page and the date picker at 1280 px wide in light and dark mode, at
+Models filter open (with Machines set to Laptop), the Machines page and the date picker at 1280 px wide in light and dark mode, at
 2× scale.
 
 ## Upgrading ccusage

@@ -80,7 +80,7 @@ dashboard up to date in the background.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/machines-dark.png">
-  <img alt="The Machines page: each machine's status, last upload, operating system, coding tools, program version, sync interval and 30-day token total" src="docs/images/machines-light.png">
+  <img alt="The Machines page: a search box and department filter above each machine's department, owner, status, last upload and sync interval, coding tools, program version and 30-day token total, with Edit and Revoke buttons" src="docs/images/machines-light.png">
 </picture>
 
 ## Everyday commands
