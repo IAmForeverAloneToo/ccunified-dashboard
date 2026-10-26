@@ -1613,3 +1613,11 @@ td.wrap {
 .row.nowrap {
   flex-wrap: nowrap;
 }
+
+/* Custom prices: narrow number fields in a table. */
+input.price-input {
+  width: 7.5em;
+  min-height: 32px;
+  padding: 4px 8px;
+  text-align: right;
+}

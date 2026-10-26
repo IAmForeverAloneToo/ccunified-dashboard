@@ -24,7 +24,9 @@ rejects anything that doesn't match it.
 Besides your dashboard, a machine contacts GitHub (for `ccunified update` and
 installs) and Cloudflare's public DNS (only when its own DNS can't find the
 dashboard). ccusage downloads current model prices; if that fails, it uses the
-prices built into it. The dashboard itself asks GitHub for the newest
+prices built into it. Once a day ccunified downloads the same public price
+lists (models.dev and LiteLLM's on GitHub) for the dashboard's own pricing,
+sending them nothing. The dashboard itself asks GitHub for the newest
 ccunified release every 6 hours, and when someone clicks **Check for
 updates**, sending nothing but its own version.
 

@@ -163,6 +163,7 @@ export function applyFilters(
     to: s.to,
     tools: s.tools,
     models: s.models,
+    pricing: s.pricing,
     bucket: s.bucket,
     by_day_machine: [...byMachine.values()],
     by_day_model: [...byModel.values()],

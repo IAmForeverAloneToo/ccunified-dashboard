@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { machineAuth } from "./agent/auth";
 import { ingest } from "./agent/ingest";
 import { pollPairing, startPairing } from "./agent/pair";
+import { receivePrices } from "./agent/prices";
 import {
   createDepartment,
   deleteDepartment,
@@ -11,6 +12,7 @@ import {
 } from "./api/departments";
 import { listMachines, revokeMachine, updateMachine } from "./api/machines";
 import { approvePairing, denyPairing, listPairing } from "./api/pairing";
+import { listPrices, updatePrices } from "./api/prices";
 import { checkForUpdates, readSettings, updateSettings } from "./api/settings";
 import { summary, usageDays } from "./api/summary";
 import { createUser, deleteUser, listUsers, updateUser } from "./api/users";
@@ -44,6 +46,7 @@ app.get("/healthz", (c) =>
 app.post("/agent/pair/start", startPairing);
 app.post("/agent/pair/poll", pollPairing);
 app.post("/agent/ingest", machineAuth, ingest);
+app.post("/agent/prices", machineAuth, receivePrices);
 
 // Dashboard API (browser session).
 const api = new Hono<AppEnv>();
@@ -86,6 +89,8 @@ api.delete("/users/:id", requireUser(), deleteUser);
 api.get("/settings", requireUser("dashboard"), readSettings);
 api.patch("/settings", requireUser("admin"), updateSettings);
 api.post("/settings/check-updates", requireUser("dashboard"), checkForUpdates);
+api.get("/prices", requireUser("dashboard"), listPrices);
+api.patch("/prices", requireUser("admin"), updatePrices);
 
 app.route("/api", api);
 

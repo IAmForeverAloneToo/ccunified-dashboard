@@ -300,6 +300,27 @@ async function seedDemo(db) {
       "UPDATE settings SET value = (SELECT json_group_array(model) FROM (SELECT model FROM usage_daily GROUP BY model ORDER BY MIN(day), model)) WHERE key = 'models'",
     )
     .run();
+  // The makers' prices from the public price lists, as machines send them
+  // (US dollars per million tokens: input, output, cache write, cache read).
+  // Gemini's demo models are in neither list, so they keep ccusage's cost.
+  const listPrices = [
+    ["claude-opus-5-5", "models.dev", 4, 20, 5, 0.2, "anthropic/claude-opus-5-5"],
+    ["claude-opus-5-5", "litellm", 4, 20, 5, 0.2, "claude-opus-5-5"],
+    ["claude-sonnet-5-5", "models.dev", 2, 10, 2.5, 0.1, "anthropic/claude-sonnet-5-5"],
+    ["anthropic/claude-sonnet-5-5", "models.dev", 2, 10, 2.5, 0.1, "anthropic/claude-sonnet-5-5"],
+    ["claude-haiku-5-5", "models.dev", 0.1, 0.5, 0.125, 0.01, "anthropic/claude-haiku-5-5"],
+    ["claude-mythos-5-1", "litellm", 10, 50, 12.5, 0.25, "claude-mythos-5-1"],
+    ["gpt-5.5", "models.dev", 5, 30, 5, 0.5, "openai/gpt-5.5"],
+    ["k3", "models.dev", 3, 15, 3, 0.3, "moonshotai/kimi-k3"],
+  ];
+  for (const [model, source, input, output, write, read, entry] of listPrices) {
+    await db
+      .prepare(
+        "INSERT INTO model_prices (model, source, input, output, cache_write, cache_read, entry, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+      )
+      .bind(model, source, input, output, write, read, entry, now)
+      .run();
+  }
   await db
     .prepare(
       "INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch, agent_version, sync_interval_minutes, client_ip, created_at, expires_at, status) VALUES (?1, ?2, 'K7QX-82MD', 'Studio PC', 'windows', 'amd64', '0.1.0-demo', 30, '203.0.113.24', ?3, ?4, 'pending')",

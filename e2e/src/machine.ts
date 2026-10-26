@@ -15,6 +15,9 @@ export interface Network {
   certFile: string;
   /** Public DNS (CCUNIFIED_DOH_URL). */
   publicDns: string;
+  /** The price lists (CCUNIFIED_MODELSDEV_URL, CCUNIFIED_LITELLM_URL). */
+  modelsDevUrl: string;
+  liteLLMUrl: string;
 }
 
 export class Machine {
@@ -48,6 +51,8 @@ export class Machine {
       https_proxy: proxy,
       SSL_CERT_FILE: this.network.certFile,
       CCUNIFIED_DOH_URL: this.network.publicDns,
+      CCUNIFIED_MODELSDEV_URL: this.network.modelsDevUrl,
+      CCUNIFIED_LITELLM_URL: this.network.liteLLMUrl,
     };
   }
 

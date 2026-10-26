@@ -1,3 +1,5 @@
+import { type PricingMode, readPricingMode } from "./pricing";
+
 export interface Settings {
   timezone: string;
   dataVersion: number;
@@ -12,6 +14,8 @@ export interface Settings {
   tools: string[];
   /** Every model the dashboard has seen, in the order they first appeared. */
   models: string[];
+  /** How costs are worked out (see lib/pricing.ts). */
+  pricing: PricingMode;
 }
 
 export async function getSettings(db: D1Database): Promise<Settings> {
@@ -29,6 +33,7 @@ export async function getSettings(db: D1Database): Promise<Settings> {
     latestCheckError: map.get("latest_check_error") ?? null,
     tools: parseList(map.get("tools")),
     models: parseList(map.get("models")),
+    pricing: readPricingMode(map.get("pricing")),
   };
 }
 

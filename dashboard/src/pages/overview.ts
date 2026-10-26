@@ -8,6 +8,8 @@ import {
   type Machine,
   type MachinesResponse,
   type PairingRequest,
+  type PriceSource,
+  type PricingMode,
   type Summary,
   type Totals,
 } from "../lib/api";
@@ -64,6 +66,20 @@ const MEASURE_TITLE: Record<MeasureKey, string> = {
   tokens: "tokens",
   output: "output tokens",
   cost: "estimated cost",
+};
+
+/** What the cost tile says, by pricing mode. */
+const COST_NOTE: Record<PricingMode, string> = {
+  ccusage: "At API prices, not your subscription bill",
+  lists: "At the makers' list prices, not your subscription bill",
+  custom: "At your prices and list prices, not a bill",
+};
+
+const PRICE_SOURCE_LABEL: Record<PriceSource, string> = {
+  ccusage: "Priced by ccusage",
+  custom: "Custom price",
+  "models.dev": "models.dev price",
+  litellm: "LiteLLM price",
 };
 
 /** How often the page refreshes: every minute, or every 10 minutes beyond 92 days. */
@@ -708,7 +724,7 @@ export async function overviewPage(ctx: PageContext) {
         compactNumber(total.output_tokens),
         multiTool ? "Text the models wrote" : "Text Claude wrote",
       ),
-      tile("Estimated cost", money(total.cost_usd), "At API prices, not your subscription bill"),
+      tile("Estimated cost", money(total.cost_usd), COST_NOTE[s.pricing?.mode ?? "ccusage"]),
       tile(
         "Machines reporting",
         `${ok} of ${active.length}`,
@@ -894,7 +910,14 @@ export async function overviewPage(ctx: PageContext) {
   function breakdownTable(
     title: string,
     caption: string,
-    entries: { label: string; colorClass?: string; totals: Totals; dim?: boolean }[],
+    entries: {
+      label: string;
+      /** A second, quieter line, such as where a model's price came from. */
+      sub?: string;
+      colorClass?: string;
+      totals: Totals;
+      dim?: boolean;
+    }[],
   ): Child[] {
     const measure = measureOf[state.measure];
     const sum = emptyTotals();
@@ -944,6 +967,7 @@ export async function overviewPage(ctx: PageContext) {
                         e.colorClass ? h("span", { class: `swatch ${e.colorClass}` }) : null,
                         e.label,
                       ),
+                      e.sub ? h("span", { class: "sub" }, e.sub) : null,
                     ),
                     h("td", { class: "num" }, fullNumber(e.totals.input_tokens)),
                     h("td", { class: "num" }, fullNumber(e.totals.output_tokens)),
@@ -1053,6 +1077,11 @@ export async function overviewPage(ctx: PageContext) {
         "Usage in this period, per model. The chart groups models by family.",
         [...byModel].map(([model, totals]) => ({
           label: model,
+          // Where its cost comes from, once costs aren't simply ccusage's.
+          sub:
+            s.pricing && s.pricing.mode !== "ccusage"
+              ? PRICE_SOURCE_LABEL[s.pricing.sources[model] ?? "ccusage"]
+              : undefined,
           colorClass:
             state.split === "model" ? families.get(modelFamily(model).id)?.colorClass : undefined,
           totals,

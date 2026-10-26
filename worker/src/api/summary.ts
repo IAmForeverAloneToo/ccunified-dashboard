@@ -4,6 +4,7 @@ import { machineScopeSql, visibleMachines } from "../auth/access";
 import type { AppEnv } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { fail } from "../lib/http";
+import { costAt, effectivePrices } from "../lib/pricing";
 import { getSettings } from "../lib/settings";
 import { addDays, type Bucket, bucketFor, daysBetween, todayIn } from "../lib/time";
 
@@ -159,6 +160,16 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     .bind(...params(from, to))
     .raw<UsageRow>();
 
+  // Costs from the dashboard's prices, when an admin chose them; models
+  // without one keep ccusage's cost.
+  const prices = await effectivePrices(c.env.DB, settings.pricing);
+  const sources: Record<string, string> = {};
+  for (const r of rows) {
+    const p = prices.get(r[3]);
+    if (p) r[8] = costAt(p, r[4], r[5], r[6], r[7]);
+    sources[r[3]] = p?.source ?? "ccusage";
+  }
+
   const head = {
     timezone: settings.timezone,
     today,
@@ -168,6 +179,8 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     tools: settings.tools,
     /** Every model the dashboard has seen, in the order they first appeared. */
     models: settings.models,
+    /** How costs are worked out, and where each model's price came from. */
+    pricing: { mode: settings.pricing, sources },
   };
 
   if (detail) {

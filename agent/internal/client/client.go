@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prices"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/version"
 
 	// Trusted root certificates for systems that have none installed
@@ -217,4 +218,17 @@ func (c *Client) HealthInfo(ctx context.Context) (*HealthInfo, error) {
 		body.SchemaVersions = []int{1}
 	}
 	return &body, nil
+}
+
+// Prices sends models' prices from the public price lists and returns the
+// models the dashboard has seen (send none to just ask). Dashboards before
+// ccunified 0.5 answer 404.
+func (c *Client) Prices(ctx context.Context, found map[string]prices.Prices) ([]string, error) {
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := c.do(ctx, "/agent/prices", map[string]any{"prices": found}, true, &out); err != nil {
+		return nil, err
+	}
+	return out.Models, nil
 }

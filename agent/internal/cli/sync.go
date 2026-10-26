@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/ccusage"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prices"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/syncer"
 )
 
@@ -53,6 +57,9 @@ func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
 		},
 	}
 	res, runErr := s.Run(ctx)
+	if runErr == nil {
+		reportPrices(ctx, cfg, state)
+	}
 	if err := state.Save(); err != nil && runErr == nil {
 		runErr = err
 	}
@@ -101,4 +108,30 @@ func runSync(ctx context.Context, env *Env, args []string) error {
 		env.Printf("The dashboard accepts Claude Code usage only. To add the other tools, run: ccunified server update\n")
 	}
 	return nil
+}
+
+// reportPrices sends the dashboard its models' prices from the public price
+// lists, for its "price lists" pricing, at most once a day. Problems are only
+// logged: they never fail a sync, and the next sync tries again.
+func reportPrices(ctx context.Context, cfg *config.Config, state *config.State) {
+	now := time.Now()
+	if now.Sub(state.PricesReportedAt) < prices.MaxAge {
+		return
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	f := &prices.Fetcher{Dir: filepath.Join(dir, "prices")}
+	n, err := prices.Report(ctx, client.New(cfg.DashboardURL, cfg.Token), f.Load)
+	switch {
+	case client.IsCode(err, http.StatusNotFound, "not_found"):
+		// A dashboard from before ccunified 0.5: ask again tomorrow.
+		state.PricesReportedAt = now
+	case err != nil:
+		config.Log("prices not sent: %v", err)
+	default:
+		state.PricesReportedAt = now
+		config.Log("prices sent for %d model(s)", n)
+	}
 }

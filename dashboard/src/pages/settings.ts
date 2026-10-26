@@ -2,6 +2,7 @@ import { api, type SettingsResponse } from "../lib/api";
 import { confirmDialog, fill, h, toast } from "../lib/dom";
 import { dateTime, relativeTime } from "../lib/format";
 import type { PageContext } from "../main";
+import { pricesCard } from "./prices";
 
 function timezones(current: string): string[] {
   let zones: string[] = [];
@@ -128,6 +129,7 @@ export async function settingsPage(ctx: PageContext) {
     }
   });
 
+  const prices = await pricesCard(isAdmin);
   ctx.main.append(
     h("div", { class: "page-head" }, h("div", null, h("h1", null, "Settings"))),
     h(
@@ -136,6 +138,7 @@ export async function settingsPage(ctx: PageContext) {
       h("h2", { id: "tz-title" }, "Days"),
       form,
     ),
+    prices,
     h(
       "section",
       { class: "card stack", "aria-labelledby": "ver-title" },

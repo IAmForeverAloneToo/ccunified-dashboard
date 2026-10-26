@@ -1101,3 +1101,108 @@ test.describe("access control", () => {
     await expect(machine("Build server").locator("td").nth(1)).toHaveText("Shared");
   });
 });
+
+test.describe("prices", () => {
+  /** Each model's tokens and ccusage's cost in the last 30 days, and the list prices. */
+  async function usageAndPrices(page: Page) {
+    return page.evaluate(async () => {
+      const s = await (await fetch("/api/summary?days=30")).json();
+      const p = await (await fetch("/api/prices")).json();
+      return { rows: s.by_day_model, prices: p.models, mode: s.pricing.mode };
+    });
+  }
+  type Rows = Awaited<ReturnType<typeof usageAndPrices>>;
+  /** The total cost the Overview should show, worked out here from tokens and prices. */
+  function expectedCost(d: Rows, custom: Record<string, number[]> = {}) {
+    let total = 0;
+    for (const r of d.rows) {
+      const m = d.prices.find((x: { model: string }) => x.model === r.model);
+      const list = m?.models_dev ?? m?.litellm;
+      const p =
+        custom[r.model] ??
+        (list ? [list.input, list.output, list.cache_write, list.cache_read] : null);
+      total += p
+        ? (r.input_tokens * p[0] +
+            r.output_tokens * p[1] +
+            r.cache_creation_tokens * p[2] +
+            r.cache_read_tokens * p[3]) /
+          1e6
+        : r.cost_usd;
+    }
+    return `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  test("admins switch to list prices or their own, and every cost follows", async ({ page }) => {
+    await logIn(page);
+    const before = await usageAndPrices(page);
+    expect(before.mode).toBe("ccusage");
+    await page.goto(new URL("/settings", demo.url).href);
+    const card = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Prices" }) });
+    await expect(card.locator("table")).toHaveCount(0);
+
+    // Price lists.
+    await card.locator("label").filter({ hasText: "Price lists" }).click();
+    await expect(card.locator("tbody tr").filter({ hasText: "k3" })).toContainText(
+      "moonshotai/kimi-k3",
+    );
+    await card.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Prices saved")).toBeVisible();
+    await page.goto(new URL("/?range=30", demo.url).href);
+    await expect(tile(page, "Estimated cost")).toHaveText(expectedCost(before));
+    await expect(page.locator(".tile").filter({ hasText: "Estimated cost" })).toContainText(
+      "makers' list prices",
+    );
+    const models = page
+      .locator(".card")
+      .filter({ has: page.getByRole("heading", { name: "Models", exact: true }) });
+    await expect(models.locator("tbody tr").filter({ hasText: "claude-mythos-5-1" })).toContainText(
+      "LiteLLM price",
+    );
+    await expect(models.locator("tbody tr").filter({ hasText: "gemini-3-pro" })).toContainText(
+      "Priced by ccusage",
+    );
+
+    // Custom: one model's own price; the rest stay on the lists.
+    await page.goto(new URL("/settings", demo.url).href);
+    await card.locator("label").filter({ hasText: "Custom" }).click();
+    const k3 = [1, 2, 3, 4];
+    for (const [i, label] of ["Input", "Output", "Cache write", "Cache read"].entries()) {
+      await card.getByLabel(`${label} price for k3`).fill(String(k3[i]));
+    }
+    await card.getByLabel("Input price for gemini-3-pro").fill("1");
+    await card.getByRole("button", { name: "Save" }).click();
+    await expect(card.getByText("Fill in all four prices for gemini-3-pro")).toBeVisible();
+    await card.getByLabel("Input price for gemini-3-pro").fill("");
+    await card.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Prices saved")).toBeVisible();
+    await page.goto(new URL("/?range=30", demo.url).href);
+    await expect(tile(page, "Estimated cost")).toHaveText(expectedCost(before, { k3 }));
+    await expect(models.locator("tbody tr").filter({ hasText: "k3" })).toContainText(
+      "Custom price",
+    );
+
+    // Back to ccusage's costs, as other tests expect.
+    await page.goto(new URL("/settings", demo.url).href);
+    await card.locator("label").filter({ hasText: "ccusage" }).click();
+    await card.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Prices saved")).toBeVisible();
+    await page.goto(new URL("/?range=30", demo.url).href);
+    const total = before.rows.reduce((n: number, r: { cost_usd: number }) => n + r.cost_usd, 0);
+    await expect(tile(page, "Estimated cost")).toHaveText(
+      `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    );
+  });
+
+  test("viewers see the prices but can't change them", async ({ page }) => {
+    await logIn(page, "sam");
+    await page.goto(new URL("/settings", demo.url).href);
+    const card = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Prices" }) });
+    await expect(card.getByText("Only admins can change this.")).toBeVisible();
+    await expect(card.getByRole("radio", { name: "Custom" })).toBeDisabled();
+    await expect(card.getByRole("button", { name: "Save" })).toHaveCount(0);
+  });
+});

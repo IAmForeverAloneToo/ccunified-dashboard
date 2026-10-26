@@ -11,6 +11,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Page, test } from "@playwright/test";
@@ -76,6 +78,18 @@ let logs: LogSet;
 let machines: [Machine, Machine];
 let expected: [ReturnType<typeof ccusageTotals>, ReturnType<typeof ccusageTotals>];
 let ccusagePath: string;
+let priceLists: Server | undefined;
+/**
+ * The price lists the machines download: Claude models on models.dev (as
+ * Anthropic's entries) and GPT models on LiteLLM, each at its own made-up
+ * price; other models aren't listed. Filled in once the logs are known.
+ */
+const PRICES = {
+  modelsDev: { anthropic: { models: {} as Record<string, unknown> } },
+  liteLLM: {} as Record<string, unknown>,
+};
+/** Each listed model's price: input, output, cache write, cache read per million tokens. */
+const listed = new Map<string, number[]>();
 
 test.beforeAll(async () => {
   test.setTimeout(10 * 60_000);
@@ -115,6 +129,30 @@ test.beforeAll(async () => {
     ccusageTotals(ccusage, logs.machines[1], TIMEZONE),
   ];
   console.log(`Logs: ${TOOLS.map((t) => `${t} ${logs.source[t]}`).join(", ")}`);
+  const models = new Set(
+    expected.flatMap((e) => Object.values(e.byToolModel).flatMap(Object.keys)),
+  );
+  [...models].forEach((model, i) => {
+    const name = model.slice(model.lastIndexOf("/") + 1);
+    const price = [1 + i, 5 + i, 1.25 + i, 0.1 * (i + 1)] as [number, number, number, number];
+    if (name.startsWith("claude-")) {
+      const [input, output, cache_write, cache_read] = price;
+      PRICES.modelsDev.anthropic.models[name] = {
+        cost: { input, output, cache_write, cache_read },
+      };
+    } else if (name.startsWith("gpt-")) {
+      const [input, output, write, read] = price.map((p) => p / 1e6);
+      PRICES.liteLLM[name] = {
+        input_cost_per_token: input,
+        output_cost_per_token: output,
+        cache_creation_input_token_cost: write,
+        cache_read_input_token_cost: read,
+      };
+    } else {
+      return;
+    }
+    listed.set(model, price);
+  });
   logs.machines.forEach((m, i) => {
     const e = expected[i];
     if (!e) return;
@@ -133,11 +171,22 @@ test.beforeAll(async () => {
     dnsDelayMs: 4000, // like Cloudflare, a new subdomain's DNS record appears after a moment
   });
   await cf.start();
+  // Price lists for the dashboard's own costs, served here.
+  const lists = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(req.url === "/models.dev.json" ? PRICES.modelsDev : PRICES.liteLLM));
+  });
+  priceLists = lists;
+  const pricesPort = await new Promise<number>((resolve) =>
+    lists.listen(0, "127.0.0.1", () => resolve((lists.address() as AddressInfo).port)),
+  );
   const network = {
     cloudflareApi: cf.apiUrl,
     proxy: cf.proxyUrl,
     certFile: cf.certFile,
     publicDns: cf.dohUrl,
+    modelsDevUrl: `http://127.0.0.1:${pricesPort}/models.dev.json`,
+    liteLLMUrl: `http://127.0.0.1:${pricesPort}/litellm.json`,
   };
   machines = [
     new Machine(NAMES[0], join(root, "machines"), exe, logs.machines[0].claudeDir, network),
@@ -159,6 +208,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  priceLists?.close();
   await browser?.close();
   await cf?.stop();
   // Includes the copies of this computer's logs.
@@ -640,4 +690,57 @@ test("filters show exactly what ccusage reports for those machines, tools and mo
   await expect(tile("Tokens")).toHaveText(
     compact(allTokens(add(expected[0].total, expected[1].total))),
   );
+});
+
+test("with the price lists, costs are each model's tokens at its listed price", async () => {
+  // The machines sent the prices of the dashboard's models when they synced.
+  const prices = (await page.evaluate(
+    async () => (await (await fetch("/api/prices")).json()).models,
+  )) as {
+    model: string;
+    models_dev: { input: number } | null;
+    litellm: { input: number } | null;
+  }[];
+  expect(listed.size).toBeGreaterThan(0);
+  for (const [model, p] of listed) {
+    const row = prices.find((r) => r.model === model);
+    expect((row?.models_dev ?? row?.litellm)?.input, model).toBeCloseTo(p[0] as number);
+  }
+  const setMode = (mode: string) =>
+    page.evaluate(
+      async (m) =>
+        (
+          await fetch("/api/prices", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ mode: m }),
+          })
+        ).status,
+      mode,
+    );
+  expect(await setMode("lists")).toBe(200);
+  let want = 0;
+  for (const e of expected) {
+    for (const models of Object.values(e.byToolModel)) {
+      for (const [model, t] of Object.entries(models)) {
+        const p = listed.get(model);
+        want += p
+          ? (t.input_tokens * (p[0] as number) +
+              t.output_tokens * (p[1] as number) +
+              t.cache_creation_tokens * (p[2] as number) +
+              t.cache_read_tokens * (p[3] as number)) /
+            1e6
+          : t.cost_usd;
+      }
+    }
+  }
+  await page.goto(`${DASHBOARD}/?range=all`);
+  const cost = page
+    .locator(".tile")
+    .filter({ has: page.locator(".tile-label", { hasText: /^Estimated cost$/ }) })
+    .locator(".tile-value");
+  await expect(cost).toHaveText(money(want));
+  expect(await setMode("ccusage")).toBe(200);
+  await page.reload();
+  await expect(cost).toHaveText(money(add(expected[0].total, expected[1].total).cost_usd));
 });

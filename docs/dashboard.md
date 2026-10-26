@@ -167,9 +167,12 @@ as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
   models*. A model used through several tools (say, Claude Sonnet in Claude
   Code and in OpenCode) is one model.
 
-Costs are **estimates at API prices**, calculated by ccusage on each machine
-(OpenCode's are the costs OpenCode itself recorded). A subscription isn't
-billed per token, so treat them as a measure of usage.
+Costs are **estimates at API prices**. By default they're calculated by
+ccusage on each machine (OpenCode's are the costs OpenCode itself recorded);
+admins can have the dashboard use the public price lists or their own prices
+instead (see [Prices](#prices)), and the Models table then says where each
+model's price came from. A subscription isn't billed per token, so treat
+costs as a measure of usage.
 
 ## Machines
 
@@ -258,8 +261,36 @@ Admins and viewers of everything see this page.
   the new zone's days: each machine notices on its next upload and uploads its
   history again, grouped the new way. Days older than the logs still on a
   machine keep their old grouping.
+- **Prices:** how the estimated costs are worked out; see [Prices](#prices).
 - **Version:** the ccunified version the dashboard runs, whether a newer
   release exists, and when the dashboard last asked GitHub. It asks on its
   own every 6 hours; **Check for updates** asks right away. If GitHub can't
   be reached, the page says *Couldn't check for updates* and why, rather than
   that the dashboard is up to date. See [Updating](commands.md#updating).
+
+### Prices
+
+Admins choose how the dashboard's estimated costs are worked out; viewers of
+everything can see the choice and the prices.
+
+- **ccusage (default):** the cost each machine's ccusage worked out, request
+  by request, from the prices it downloads (models.dev, else LiteLLM, else the
+  prices built into it).
+- **Price lists:** each model's maker's price (Anthropic's for Claude, OpenAI's
+  for GPT, Moonshot's for Kimi, …) on [models.dev](https://models.dev), or
+  else on [LiteLLM](https://github.com/BerriAI/litellm)'s list. Sellers that
+  resell a model at other prices, and free subscription plans, are ignored.
+  Models in neither list keep ccusage's cost. The table shows which entry each
+  model matched. The machines download the lists at most once a day and send
+  the dashboard its models' prices; machines need ccunified 0.5 or later.
+- **Custom:** your own prices (US dollars per million tokens of input,
+  output, cache writes and cache reads) for the models you fill in; the
+  others are priced as with the price lists. Leave a model's four prices
+  empty to drop its custom price.
+
+A change applies to all history, and every total, chart and table follows
+it. The dashboard keeps daily totals rather than single requests, so with the
+price lists or custom prices, long-context surcharges (such as Claude's higher
+rate past 200,000 input tokens) and the 1-hour cache-write rate aren't
+applied; ccusage applies them.
+

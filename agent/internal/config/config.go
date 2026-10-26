@@ -186,6 +186,9 @@ type State struct {
 	Tools []string `json:"tools,omitempty"`
 	// LastWarning is a problem the last sync worked around.
 	LastWarning string `json:"last_warning,omitempty"`
+	// PricesReportedAt is when this machine last sent the dashboard its
+	// models' prices from the public price lists (once a day).
+	PricesReportedAt time.Time `json:"prices_reported_at,omitzero"`
 }
 
 // LoadState reads state.json; a missing or damaged file gives a fresh state.

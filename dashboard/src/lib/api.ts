@@ -136,6 +136,33 @@ interface SummaryHead {
   tools: string[];
   /** Every model the dashboard has seen, in the order they first appeared. */
   models: string[];
+  /** How costs are worked out, and where each model's price came from. */
+  pricing?: { mode: PricingMode; sources: Record<string, PriceSource> };
+}
+
+/**
+ * How costs are worked out: as each machine's ccusage reported them, from the
+ * public price lists, or from custom prices (see worker/src/lib/pricing.ts).
+ */
+export type PricingMode = "ccusage" | "lists" | "custom";
+export type PriceSource = "ccusage" | "custom" | "models.dev" | "litellm";
+
+/** A price in US dollars per million tokens. */
+export interface Price {
+  input: number;
+  output: number;
+  cache_write: number;
+  cache_read: number;
+}
+
+export interface PricesResponse {
+  mode: PricingMode;
+  models: {
+    model: string;
+    custom: Price | null;
+    models_dev: (Price & { entry: string }) | null;
+    litellm: (Price & { entry: string }) | null;
+  }[];
 }
 
 export interface Summary extends SummaryHead {

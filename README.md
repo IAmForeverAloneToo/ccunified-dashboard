@@ -120,8 +120,9 @@ syncing every 15 minutes make under 1,000 requests a day (the limit is
 [Limits and cost](docs/how-it-works.md#limits-and-cost) for the measured
 numbers.
 
-The costs on the dashboard are **estimates at API prices**, as calculated by
-ccusage. With a subscription (Claude, ChatGPT, Copilot, …) you aren't billed
+The costs on the dashboard are **estimates at API prices**: as calculated by
+ccusage, or, if an admin chooses, from the public price lists or your own
+prices per model. With a subscription (Claude, ChatGPT, Copilot, …) you aren't billed
 per token, so treat them as a measure of usage, not a bill.
 
 ## License

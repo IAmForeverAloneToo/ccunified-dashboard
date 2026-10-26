@@ -115,6 +115,13 @@ The background sync runs `ccunified sync --quiet` on schedule:
    (or as long as the dashboard asks). The result goes to `state.json`, shown
    by `ccunified status`, and a line to `ccunified.log`.
 
+8. **Prices**, at most once a day: after a successful sync, the machine asks
+   the dashboard which models it has seen (`POST /agent/prices`), downloads
+   the public price lists (models.dev and LiteLLM, kept for a day in its
+   settings folder), and sends each model's price from its maker. These are
+   used only if an admin picks the price lists or custom prices (see
+   [Prices](dashboard.md#prices)); a problem here never fails a sync.
+
 Claude Code deletes old session logs (after 30 days by default), and other
 tools may too. The dashboard keeps every day it has received, so from the day
 a machine joins its history is kept for good.
@@ -170,6 +177,7 @@ learns of a release as soon as a machine uploads while running it.
 | `POST /agent/pair/start` | Ask to join; returns the user code and device code |
 | `POST /agent/pair/poll` | Wait for approval; returns the upload key once |
 | `POST /agent/ingest` | Upload usage |
+| `POST /agent/prices` | Send models' prices from the public price lists; answers with the models the dashboard has seen |
 
 **For people** (logged in, except for logging in itself):
 
@@ -189,6 +197,7 @@ learns of a release as soon as a machine uploads while running it.
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users and their roles | admin; manager, for the plain users of their departments |
 | `GET /api/settings` / `PATCH /api/settings` | Read the settings and update status / change the time zone | admin or viewer / admin |
 | `POST /api/settings/check-updates` | Ask GitHub for the newest release now | admin or viewer |
+| `GET /api/prices` / `PATCH /api/prices` | How costs are worked out and every model's prices / choose the pricing and set custom prices | admin or viewer / admin |
 
 Who sees and manages what is decided in the Worker
 ([`auth/access.ts`](../worker/src/auth/access.ts)), so each person only ever
@@ -210,7 +219,8 @@ without a login. Every other path serves the dashboard's pages.
 | `login_attempts` | Failed-login counters for rate limiting |
 | `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time, the tools it has reported, department and owner |
 | `pairing_requests` | Machines waiting to join, and the outcome of each request (with the department and owner picked when approving) |
-| `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost |
+| `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost (ccusage's) |
+| `model_prices` | Each model's price per million tokens from models.dev, LiteLLM and the admins (`custom`), with the list entry it came from |
 
 All tables are SQLite `STRICT` tables, created by the migrations in
 [`worker/migrations/`](../worker/migrations/); `ccunified server update`
