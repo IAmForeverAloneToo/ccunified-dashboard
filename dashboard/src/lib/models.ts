@@ -52,7 +52,8 @@ export function modelFamily(model: string): Family {
 /**
  * Chart series for model families, keyed by family id. Families get colors
  * in the order the dashboard first saw one of their models (`models`, from
- * the summary); past eight, the newest fold into "Other models".
+ * the summary); only when more than eight are shown at once do the newest
+ * fold into "Other models" (see stableSeries).
  */
 export function familySeries(models: string[], seen: Iterable<string>): Map<string, Series> {
   const labels = new Map<string, string>();

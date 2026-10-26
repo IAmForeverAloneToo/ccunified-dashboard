@@ -35,7 +35,7 @@ export function toolName(id: string): string {
 /**
  * Chart series for tools. Tools keep the color of their position in the
  * order the dashboard first saw them, so new tools never repaint old ones.
- * Past eight tools, the newest fold into a gray "Other tools".
+ * Past eight tools shown at once, the newest fold into a gray "Other tools".
  */
 export function toolSeries(order: string[], seen: Iterable<string> = []): Map<string, Series> {
   return stableSeries(order, seen, toolName, "Other tools");

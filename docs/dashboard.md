@@ -163,8 +163,9 @@ as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
   new family), other vendors' models by their family (GPT, Gemini, Grok,
   Kimi, Qwen, GLM, DeepSeek, …), and anything else by the first word of its
   name. Like tools, families get colors in the order the dashboard first saw
-  them, and only past eight families do the newest share a gray *Other
-  models*. A model used through several tools (say, Claude Sonnet in Claude
+  them; a family seen after the eighth takes a color that no other family in
+  view uses. Only when a chart shows more than eight families at once do the
+  newest share a gray *Other models*. A model used through several tools (say, Claude Sonnet in Claude
   Code and in OpenCode) is one model.
 
 Costs are **estimates at API prices**. By default they're calculated by

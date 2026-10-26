@@ -28,9 +28,9 @@ describe("tools", () => {
     expect(toolSeries(["codex", "claude"]).get("claude")?.colorClass).toBe("s2");
   });
 
-  test("past eight tools, the newest fold into Other tools", () => {
+  test("past eight tools shown at once, the newest fold into Other tools", () => {
     const ids = Object.keys(TOOL_NAMES).slice(0, 9);
-    const series = toolSeries(ids);
+    const series = toolSeries(ids, ids);
     expect(series.get(ids[6] ?? "")?.colorClass).toBe("s7");
     expect(series.get(ids[7] ?? "")).toEqual({
       id: "other",

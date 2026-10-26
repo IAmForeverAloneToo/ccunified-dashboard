@@ -4,7 +4,11 @@ import type { Series } from "./chart";
  * Chart series that keep their colors. Ids get colors in the order given,
  * usually the order the dashboard first saw them, so a new id never repaints
  * the others; ids that appear but aren't in the order come after, by name.
- * Past eight ids, the newest fold into one gray series, `other`.
+ *
+ * There are eight colors. Past eight ids overall, an id beyond the eighth that
+ * is shown (in `seen`) takes a color no other shown id uses, as long as at
+ * most eight are shown; only when more than eight are shown do the newest
+ * fold into one gray series, `other`.
  */
 export function stableSeries(
   order: string[],
@@ -13,16 +17,29 @@ export function stableSeries(
   other: string,
 ): Map<string, Series> {
   const all = [...new Set(order)];
-  for (const id of [...new Set(seen)].sort()) if (!all.includes(id)) all.push(id);
-  const fold = all.length > 8;
+  const shownSet = new Set(seen);
+  for (const id of [...shownSet].sort()) if (!all.includes(id)) all.push(id);
+  const color = (id: string, slot: number): Series => ({
+    id,
+    label: label(id),
+    colorClass: `s${slot + 1}`,
+  });
+  const folded: Series = { id: "other", label: other, colorClass: "s-other" };
   const map = new Map<string, Series>();
+  const shown = all.filter((id) => shownSet.has(id));
+  if (all.length <= 8 || shown.length <= 8) {
+    // Colors the shown ids own; the ones beyond the eighth take what's left.
+    const taken = new Set(shown.map((id) => all.indexOf(id)).filter((i) => i < 8));
+    const free = [0, 1, 2, 3, 4, 5, 6, 7].filter((i) => !taken.has(i));
+    all.forEach((id, i) => {
+      if (i < 8) map.set(id, color(id, i));
+      else if (shownSet.has(id)) map.set(id, color(id, free.shift() ?? 0));
+      else map.set(id, folded);
+    });
+    return map;
+  }
   all.forEach((id, i) => {
-    map.set(
-      id,
-      fold && i >= 7
-        ? { id: "other", label: other, colorClass: "s-other" }
-        : { id, label: label(id), colorClass: `s${i + 1}` },
-    );
+    map.set(id, i >= 7 ? folded : color(id, i));
   });
   return map;
 }

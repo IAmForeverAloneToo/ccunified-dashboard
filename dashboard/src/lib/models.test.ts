@@ -72,4 +72,24 @@ describe("model families", () => {
     });
     expect(series.get("deepseek")?.id).toBe("other");
   });
+
+  test("a period with eight families or fewer names each, even after more than eight overall", () => {
+    // Nine families seen over time; Kimi came last.
+    const models = [
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+      "claude-fable-5-1",
+      "claude-mythos-5-1",
+      "gpt-5.5",
+      "gemini-3-pro",
+      "glm-5",
+      "k3.1-pro",
+    ];
+    const series = familySeries(models, ["claude-opus-5-5", "k3.1-pro"]);
+    expect(series.get("opus")?.colorClass).toBe("s1");
+    // Kimi gets a color no other family in view uses, not the gray fold.
+    expect(series.get("kimi")).toMatchObject({ id: "kimi", label: "Kimi" });
+    expect(series.get("kimi")?.colorClass).toMatch(/^s[2-8]$/);
+  });
 });
