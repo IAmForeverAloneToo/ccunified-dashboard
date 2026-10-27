@@ -1206,3 +1206,84 @@ test.describe("prices", () => {
     await expect(card.getByRole("button", { name: "Save" })).toHaveCount(0);
   });
 });
+
+test.describe("removing machines", () => {
+  /** Adds a revoked machine with a million tokens of usage today; returns its id. */
+  async function revokedMachine(page: Page, name: string): Promise<string> {
+    const today = await dashboardToday(page);
+    const id = `e2e-${name.toLowerCase().replaceAll(" ", "-")}`;
+    const now = Date.now();
+    await demo.db.batch([
+      demo.db
+        .prepare(
+          `INSERT INTO machines (id, name, os, arch, agent_version, sync_interval_minutes, token_hash, created_at, last_seen_at, revoked_at, tools)
+           VALUES (?1, ?2, 'linux', 'amd64', '0.5.1', 30, ?1, ?3, ?3, ?3, '["claude"]')`,
+        )
+        .bind(id, name, now),
+      demo.db
+        .prepare(
+          `INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd, updated_at)
+           VALUES (?1, 'claude', ?2, 'claude-opus-5-5', 1000000, 0, 0, 0, 5, ?3)`,
+        )
+        .bind(id, today, now),
+      demo.db.prepare(
+        "UPDATE settings SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'data_version'",
+      ),
+    ]);
+    return id;
+  }
+
+  /** Removes a revoked machine on the Machines page, keeping or deleting its usage. */
+  async function remove(page: Page, name: string, usage: "Keep it in the totals" | "Delete it") {
+    await page.goto(new URL("/machines", demo.url).href);
+    const row = page.locator("tbody tr").filter({ hasText: name });
+    await expect(row).toContainText("Revoked");
+    await expect(row.getByRole("button", { name: "Revoke" })).toHaveCount(0);
+    await row.getByRole("button", { name: "Remove" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("radio", { name: /Keep it in the totals/ })).toBeChecked();
+    await dialog.locator("label").filter({ hasText: usage }).click();
+    await dialog.getByRole("button", { name: "Remove" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator("tbody tr").filter({ hasText: name })).toHaveCount(0);
+  }
+
+  test("an admin removes revoked machines, keeping or deleting their usage", async ({ page }) => {
+    await logIn(page);
+    const ids = [await revokedMachine(page, "Old laptop"), await revokedMachine(page, "Spare PC")];
+    try {
+      const today = await dashboardToday(page);
+      const from = addDays(today, -29);
+      const before = await apiTokens(page, from, today);
+
+      // Keeping its usage: the totals stay, as "Removed machines".
+      await remove(page, "Old laptop", "Keep it in the totals");
+      await expect(page.getByText("Old laptop removed; its usage was kept")).toBeVisible();
+      await page.goto(new URL("/?range=30", demo.url).href);
+      await expect(tile(page, "Tokens")).toHaveText(compact(before));
+      const machines = page
+        .locator(".card")
+        .filter({ has: page.getByRole("heading", { name: "Machines", exact: true }) });
+      await expect(
+        machines.locator("tbody tr").filter({ hasText: "Removed machines" }),
+      ).toBeVisible();
+      await expect(machines).not.toContainText("Old laptop");
+      await page.getByRole("button", { name: /^Machines / }).click();
+      const list = page.getByRole("dialog", { name: "Filter by machines" });
+      await expect(list.getByRole("checkbox", { name: /Spare PC/ })).toBeVisible();
+      await expect(list.getByRole("checkbox", { name: /Old laptop/ })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // Deleting it: the totals drop by what it used.
+      await remove(page, "Spare PC", "Delete it");
+      await expect(page.getByText("Spare PC and its usage removed")).toBeVisible();
+      expect(await apiTokens(page, from, today)).toBe(before - 1_000_000);
+      await page.goto(new URL("/?range=30", demo.url).href);
+      await expect(tile(page, "Tokens")).toHaveText(compact(before - 1_000_000));
+    } finally {
+      for (const id of ids) {
+        await demo.db.prepare("DELETE FROM machines WHERE id = ?1").bind(id).run();
+      }
+    }
+  });
+});

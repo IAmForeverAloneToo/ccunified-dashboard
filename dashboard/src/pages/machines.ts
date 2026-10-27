@@ -160,6 +160,8 @@ export async function machinesPage(ctx: PageContext) {
       const t = r.input_tokens + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens;
       tokens30.set(r.machine_id, (tokens30.get(r.machine_id) ?? 0) + t);
     }
+    // Removed machines whose usage was kept only count in the Overview.
+    m.machines = m.machines.filter((x) => x.removed_at === null);
     data = { m, tokens30, tools: summary.tools, departments: deps.departments };
     addSlot.replaceChildren(addMachineCard(m.source_repo, managesSomething(ctx.me)));
     draw();
@@ -183,7 +185,7 @@ export async function machinesPage(ctx: PageContext) {
     const showTools = new Set(m.machines.flatMap((x) => x.tools)).size > 1;
     // Department and owner columns, once there are departments or owners.
     const showAccess = data.departments.length > 0 || m.machines.some((x) => x.owner !== null);
-    const canManageAny = m.machines.some((x) => x.can_manage && x.revoked_at === null);
+    const canManageAny = m.machines.some((x) => x.can_manage);
 
     const header = h(
       "div",
@@ -279,19 +281,22 @@ export async function machinesPage(ctx: PageContext) {
       );
 
     const rows: Child[] = page.map((machine) => {
-      const actions =
-        machine.can_manage && machine.revoked_at === null
+      const button = (label: string, onclick: () => void, danger = false) =>
+        h("button", { type: "button", class: danger ? "small danger" : "small", onclick }, label);
+      const actions = !machine.can_manage
+        ? null
+        : machine.revoked_at === null
           ? h(
               "div",
               { class: "row nowrap" },
-              h("button", { type: "button", class: "small", onclick: () => edit(machine) }, "Edit"),
-              h(
-                "button",
-                { type: "button", class: "small danger", onclick: () => revoke(machine) },
-                "Revoke",
-              ),
+              button("Edit", () => edit(machine)),
+              button("Revoke", () => revoke(machine), true),
             )
-          : null;
+          : h(
+              "div",
+              { class: "row nowrap" },
+              button("Remove", () => remove(machine), true),
+            );
       return h(
         "tr",
         { class: machine.revoked_at !== null ? "dim" : undefined },
@@ -529,8 +534,64 @@ export async function machinesPage(ctx: PageContext) {
       danger: true,
     });
     if (!ok) return;
-    await api(`/machines/${encodeURIComponent(machine.id)}`, { method: "DELETE" });
+    await api(`/machines/${encodeURIComponent(machine.id)}/revoke`, { method: "POST" });
     toast(`${machine.name} revoked`);
+    await load();
+  }
+
+  async function remove(machine: Machine) {
+    const choice = (value: "keep" | "delete", label: string, hint: string) =>
+      h(
+        "label",
+        { class: "choice" },
+        h("input", { type: "radio", name: "usage", value, checked: value === "keep" }),
+        h("span", { class: "choice-text" }, label, h("span", { class: "hint" }, hint)),
+      );
+    const answer = await openDialog((close) => {
+      const form = h(
+        "form",
+        { class: "stack" },
+        h("h2", null, `Remove ${machine.name}?`),
+        h(
+          "p",
+          { class: "secondary" },
+          "It leaves the Machines page and the machine filter for good. This can't be undone.",
+        ),
+        h(
+          "fieldset",
+          { class: "choices" },
+          h("legend", null, "Its usage"),
+          choice(
+            "keep",
+            "Keep it in the totals",
+            "Its tokens and costs still count, shown as “Removed machines”.",
+          ),
+          choice(
+            "delete",
+            "Delete it",
+            "Its tokens and costs are deleted, and past totals drop by what it used.",
+          ),
+        ),
+        h(
+          "div",
+          { class: "dialog-actions" },
+          h("button", { type: "button", onclick: () => close() }, "Cancel"),
+          h("button", { type: "submit", class: "danger" }, "Remove"),
+        ),
+      );
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        close(new FormData(form).get("usage") === "delete" ? "delete" : "keep");
+      });
+      return form;
+    });
+    if (answer !== "keep" && answer !== "delete") return;
+    await api(`/machines/${encodeURIComponent(machine.id)}?usage=${answer}`, { method: "DELETE" });
+    toast(
+      answer === "keep"
+        ? `${machine.name} removed; its usage was kept`
+        : `${machine.name} and its usage removed`,
+    );
     await load();
   }
 

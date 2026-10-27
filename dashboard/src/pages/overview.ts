@@ -118,23 +118,29 @@ function addInto(into: Totals, t: Totals): void {
 /**
  * Machines keep the color of their position in the order they joined
  * (oldest first), so filtering never repaints anyone. Past eight machines, the
- * newest fold into a gray "Other machines".
+ * newest fold into a gray "Other machines". Removed machines (their usage
+ * kept) are gray "Removed machines", or part of "Other machines" when there
+ * is one.
  */
 export function machineSeries(machines: Machine[]): Map<string, Series> {
-  const ordered = [...machines].sort(
-    (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-  );
+  const ordered = machines
+    .filter((m) => m.removed_at === null)
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
   const fold = ordered.length > 8;
+  const other: Series = { id: "other", label: "Other machines", colorClass: "s-other" };
+  const removed: Series = fold
+    ? other
+    : { id: REMOVED, label: "Removed machines", colorClass: "s-other" };
   const map = new Map<string, Series>();
   ordered.forEach((m, i) => {
-    if (fold && i >= 7) {
-      map.set(m.id, { id: "other", label: "Other machines", colorClass: "s-other" });
-    } else {
-      map.set(m.id, { id: m.id, label: m.name, colorClass: `s${i + 1}` });
-    }
+    map.set(m.id, fold && i >= 7 ? other : { id: m.id, label: m.name, colorClass: `s${i + 1}` });
   });
+  for (const m of machines) if (m.removed_at !== null) map.set(m.id, removed);
   return map;
 }
+
+/** The series and table row that removed machines' usage counts under. */
+const REMOVED = "removed";
 
 // ---------- Time buckets (the API picks one for the period) ----------
 
@@ -383,6 +389,7 @@ export async function overviewPage(ctx: PageContext) {
       const others =
         f.departments.length + f.tools.length + f.families.length + f.models.length > 0;
       return machines
+        .filter((m) => m.removed_at === null)
         .filter((m) => !ok || ok.has(m.id) || f.machines.includes(m.id))
         .map((m) => {
           const stale = ok !== undefined && !ok.has(m.id);
@@ -1004,24 +1011,30 @@ export async function overviewPage(ctx: PageContext) {
 
   function drawBreakdown(s: Summary) {
     const map = machineSeries(machines);
+    // Removed machines share one row.
+    const rowOf = (id: string) => (machineById.get(id)?.removed_at ? REMOVED : id);
     const byMachine = new Map<string, Totals>();
     for (const r of s.by_day_machine) {
-      const t = byMachine.get(r.machine_id) ?? emptyTotals();
+      const id = rowOf(r.machine_id);
+      const t = byMachine.get(id) ?? emptyTotals();
       addInto(t, r);
-      byMachine.set(r.machine_id, t);
+      byMachine.set(id, t);
     }
-    const names = new Map(machines.map((m) => [m.id, m]));
     fill(
       breakdown,
       breakdownTable(
         "Machines",
         "Usage in this period, per machine.",
         [...byMachine].map(([id, totals]) => {
-          const m = names.get(id);
-          const color = map.get(id)?.colorClass;
+          const m = machineById.get(id);
+          const color = state.split === "machine" ? map.get(id)?.colorClass : undefined;
+          if (id === REMOVED) {
+            const gray = state.split === "machine" ? "s-other" : undefined;
+            return { label: "Removed machines", colorClass: gray, totals, dim: true };
+          }
           return {
             label: m ? `${m.name}${m.revoked_at !== null ? " (revoked)" : ""}` : "Unknown machine",
-            colorClass: state.split === "machine" ? color : undefined,
+            colorClass: color,
             totals,
             dim: m?.revoked_at !== null,
           };

@@ -265,12 +265,17 @@ describe("who manages which machines", () => {
     ).toBe(200);
   });
 
-  test("revoking follows the same rules", async () => {
+  test("revoking and removing follow the same rules", async () => {
     const revoke = (who: Person, m: MachineKey) =>
-      send("DELETE", `/api/machines/${x.machines[m].id}`, x.people[who]);
+      send("POST", `/api/machines/${x.machines[m].id}/revoke`, x.people[who]);
+    const remove = (who: Person, m: MachineKey) =>
+      send("DELETE", `/api/machines/${x.machines[m].id}?usage=keep`, x.people[who]);
     expect((await revoke("deptViewerA", "a2")).status).toBe(403);
     expect((await revoke("managerB", "a2")).status).toBe(404);
     expect((await revoke("managerA", "a2")).status).toBe(200);
+    expect((await remove("deptViewerA", "a2")).status).toBe(403);
+    expect((await remove("managerB", "a2")).status).toBe(404);
+    expect((await remove("managerA", "a2")).status).toBe(200);
   });
 });
 

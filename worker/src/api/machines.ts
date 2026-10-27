@@ -11,7 +11,7 @@ import {
 import type { AppEnv, SessionUser } from "../env";
 import { fail, readJson } from "../lib/http";
 import { compareVersions } from "../lib/semver";
-import { getSettings, parseList } from "../lib/settings";
+import { bumpDataVersion, getSettings, parseList } from "../lib/settings";
 import { latestVersion } from "../lib/updates";
 import { SOURCE_REPO } from "../version";
 
@@ -34,6 +34,7 @@ interface MachineDbRow {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  removed_at: number | null;
   tools: string;
   department_id: string | null;
   department_name: string | null;
@@ -55,6 +56,8 @@ export function machineStatus(
 /**
  * GET /api/machines — the machines the user can see (see auth/access.ts),
  * each with its department, its owner, and whether the user manages it.
+ * Removed machines whose usage was kept are listed too (with `removed_at`),
+ * so the Overview can count their usage in their departments.
  */
 export async function listMachines(c: Context<AppEnv>): Promise<Response> {
   const u = c.get("user");
@@ -62,7 +65,7 @@ export async function listMachines(c: Context<AppEnv>): Promise<Response> {
     getSettings(c.env.DB),
     c.env.DB.prepare(
       `SELECT m.id, m.name, m.os, m.arch, m.agent_version, m.ccusage_version,
-              m.sync_interval_minutes, m.created_at, m.last_seen_at, m.revoked_at, m.tools,
+              m.sync_interval_minutes, m.created_at, m.last_seen_at, m.revoked_at, m.removed_at, m.tools,
               m.department_id, d.name AS department_name, m.owner_id, o.username AS owner_username
          FROM machines m
          LEFT JOIN departments d ON d.id = m.department_id
@@ -110,7 +113,7 @@ export async function nameTaken(db: D1Database, name: string, exceptId?: string)
 async function managedMachine(c: Context<AppEnv>, u: SessionUser) {
   const id = c.req.param("id") ?? "";
   const m = await c.env.DB.prepare(
-    "SELECT id, department_id, owner_id, revoked_at FROM machines WHERE id = ?1",
+    "SELECT id, department_id, owner_id, revoked_at, removed_at FROM machines WHERE id = ?1",
   )
     .bind(id)
     .first<{
@@ -118,9 +121,11 @@ async function managedMachine(c: Context<AppEnv>, u: SessionUser) {
       department_id: string | null;
       owner_id: string | null;
       revoked_at: number | null;
+      removed_at: number | null;
     }>();
   const visible =
     m !== null &&
+    m.removed_at === null &&
     (seesAll(u) ||
       m.owner_id === u.id ||
       (m.department_id !== null &&
@@ -170,8 +175,8 @@ export async function updateMachine(c: Context<AppEnv>): Promise<Response> {
 }
 
 /**
- * DELETE /api/machines/:id — revoke the machine's upload key; its history is
- * kept (admins, and managers of its department).
+ * POST /api/machines/:id/revoke — revoke the machine's upload key; its
+ * history is kept (admins, and managers of its department).
  */
 export async function revokeMachine(c: Context<AppEnv>): Promise<Response> {
   const m = await managedMachine(c, c.get("user"));
@@ -181,5 +186,34 @@ export async function revokeMachine(c: Context<AppEnv>): Promise<Response> {
     .bind(Date.now(), m.id)
     .run();
   if (res.meta.changes === 0) fail(404, "not_found");
+  return c.json({ ok: true });
+}
+
+const RemoveQuery = z.object({ usage: z.enum(["keep", "delete"]) });
+
+/**
+ * DELETE /api/machines/:id?usage=keep|delete — remove a revoked machine from
+ * the dashboard (admins, and managers of its department). With usage=keep its
+ * usage stays in the totals, as "Removed machines"; with usage=delete the
+ * machine and all its usage are deleted.
+ */
+export async function removeMachine(c: Context<AppEnv>): Promise<Response> {
+  const query = RemoveQuery.safeParse(c.req.query());
+  if (!query.success) fail(400, "invalid_request", { message: "usage must be keep or delete" });
+  const m = await managedMachine(c, c.get("user"));
+  if (m.revoked_at === null) fail(409, "not_revoked");
+  const db = c.env.DB;
+  if (query.data.usage === "keep") {
+    await db
+      .prepare("UPDATE machines SET removed_at = ?1 WHERE id = ?2")
+      .bind(Date.now(), m.id)
+      .run();
+  } else {
+    // Its usage rows go with it (ON DELETE CASCADE); dashboards refetch.
+    await db.batch([
+      db.prepare("DELETE FROM machines WHERE id = ?1").bind(m.id),
+      bumpDataVersion(db),
+    ]);
+  }
   return c.json({ ok: true });
 }

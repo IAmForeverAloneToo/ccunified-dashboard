@@ -111,6 +111,20 @@ There are two separate steps, and you usually want both:
   machine's upload key stops working immediately. Its past usage stays on the
   dashboard and in the totals.
 
+A revoked machine stays on the Machines page, dimmed, until someone removes
+it: an admin (or the manager of its department) clicks **Remove** on its row
+and picks what happens to its usage:
+
+- **Keep it in the totals:** the machine leaves the Machines page and the
+  Overview's machine filter, but its tokens and costs still count. The
+  Overview shows them as **Removed machines** (one gray series and one row
+  for all removed machines), still in the machine's department.
+- **Delete it:** the machine and all of its usage are deleted, and past
+  totals drop by what it used.
+
+Removing can't be undone. Only revoked machines can be removed, so revoke
+first.
+
 If a machine is lost or stolen, revoke it; that's all it takes to stop it from
 uploading.
 

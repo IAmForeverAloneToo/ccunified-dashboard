@@ -29,7 +29,7 @@ People can have a role for the whole dashboard, roles in
 Engineering or Design):
 
 - **Manager:** sees the department's machines; approves machines into it;
-  renames, moves (between departments they manage) and revokes them; picks
+  renames, moves (between departments they manage), revokes and removes them; picks
   their owners; and adds and manages its people (see [Users](#users)).
 - **Viewer:** sees the department's machines.
 - **Member:** can own machines in the department, and sees only the ones they
@@ -49,7 +49,7 @@ those.
 |---|---|---|---|---|---|
 | See their own machines | ✓ | ✓ | ✓ | ✓ | ✓ |
 | See a department's machines | | ✓ | ✓ | ✓ (all) | ✓ (all) |
-| Approve, rename, move and revoke machines; pick owners | | | ✓ (their departments) | | ✓ |
+| Approve, rename, move, revoke and remove machines; pick owners | | | ✓ (their departments) | | ✓ |
 | Add and manage users | | | ✓ (see [Users](#users)) | | ✓ |
 | Manage departments and settings | | | | | ✓ |
 | Change their own password and two-factor login | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -185,7 +185,9 @@ system, pick a **Department**, and click a column's name to sort by it; long
 lists come in pages of 50.
 
 Admins, and managers for their departments' machines, can **Edit** a machine
-(its name, department and owner) and **Revoke** it. The owner is someone with
+(its name, department and owner) and **Revoke** it; a revoked machine can then
+be **Removed**, keeping its usage in the totals (as *Removed machines* on the
+Overview) or deleting it. The owner is someone with
 a role in the machine's department, or an admin; admins can give a machine
 without a department any owner. The *Add a machine* card shows the install
 commands and your dashboard's address. Machine statuses and removing machines

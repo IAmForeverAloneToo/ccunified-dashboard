@@ -10,7 +10,7 @@ import {
   listDepartments,
   renameDepartment,
 } from "./api/departments";
-import { listMachines, revokeMachine, updateMachine } from "./api/machines";
+import { listMachines, removeMachine, revokeMachine, updateMachine } from "./api/machines";
 import { approvePairing, denyPairing, listPairing } from "./api/pairing";
 import { listPrices, updatePrices } from "./api/prices";
 import { checkForUpdates, readSettings, updateSettings } from "./api/settings";
@@ -70,7 +70,8 @@ api.get("/machines", requireUser(), listMachines);
 // Who sees and manages which machines and users is decided within each
 // route (see auth/access.ts).
 api.patch("/machines/:id", requireUser(), updateMachine);
-api.delete("/machines/:id", requireUser(), revokeMachine);
+api.post("/machines/:id/revoke", requireUser(), revokeMachine);
+api.delete("/machines/:id", requireUser(), removeMachine);
 
 api.get("/departments", requireUser(), listDepartments);
 api.post("/departments", requireUser("admin"), createDepartment);

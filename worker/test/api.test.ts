@@ -83,7 +83,8 @@ describe("access control", () => {
     const m = await w.createMachine();
     const calls: [string, RequestInit][] = [
       [`/api/machines/${m.id}`, jsonInit("PATCH", { name: "x" })],
-      [`/api/machines/${m.id}`, { method: "DELETE" }],
+      [`/api/machines/${m.id}/revoke`, { method: "POST" }],
+      [`/api/machines/${m.id}?usage=keep`, { method: "DELETE" }],
       ["/api/settings", jsonInit("PATCH", { timezone: "UTC" })],
     ];
     for (const [path, init] of calls) {
@@ -420,15 +421,75 @@ describe("machines", () => {
         "/agent/ingest",
         jsonInit("POST", payload(), { headers: { authorization: `Bearer ${m.token}` } }),
       );
+    const revoke = () =>
+      w.fetch(`/api/machines/${m.id}/revoke`, { method: "POST", cookie: admin.cookie });
     expect((await up()).status).toBe(200);
-    const res = await w.fetch(`/api/machines/${m.id}`, { method: "DELETE", cookie: admin.cookie });
-    expect(res.status).toBe(200);
+    expect((await revoke()).status).toBe(200);
     expect(await w.sql("SELECT 1 FROM usage_daily WHERE machine_id = ?1", m.id)).toHaveLength(1);
     await w.sql("UPDATE machines SET last_seen_at = 0 WHERE id = ?1", m.id);
     expect((await up()).status).toBe(401);
-    expect(
-      (await w.fetch(`/api/machines/${m.id}`, { method: "DELETE", cookie: admin.cookie })).status,
-    ).toBe(404);
+    expect((await revoke()).status).toBe(404);
+  });
+
+  describe("removing a revoked machine", () => {
+    async function revokedWithUsage(name: string) {
+      const m = await w.createMachine({ name });
+      const res = await w.fetch(
+        "/agent/ingest",
+        jsonInit("POST", payload(), { headers: { authorization: `Bearer ${m.token}` } }),
+      );
+      expect(res.status).toBe(200);
+      return m;
+    }
+    const remove = (id: string, usage: string) =>
+      w.fetch(`/api/machines/${id}?usage=${usage}`, { method: "DELETE", cookie: admin.cookie });
+    const revoke = (id: string) =>
+      w.fetch(`/api/machines/${id}/revoke`, { method: "POST", cookie: admin.cookie });
+    const listed = async () =>
+      (
+        (await (await w.fetch("/api/machines", { cookie: admin.cookie })).json()) as {
+          machines: { id: string; removed_at: number | null }[];
+        }
+      ).machines;
+    const etag = async () =>
+      (await w.fetch("/api/summary?days=3660", { cookie: admin.cookie })).headers.get("etag");
+
+    test("only once it's revoked, and only with a choice about its usage", async () => {
+      const m = await revokedWithUsage("remove-active");
+      expect((await remove(m.id, "keep")).status).toBe(409);
+      await revoke(m.id);
+      expect((await remove(m.id, "")).status).toBe(400);
+      expect((await remove(m.id, "sometimes")).status).toBe(400);
+      expect((await remove("no-such-id", "keep")).status).toBe(404);
+    });
+
+    test("keeping its usage: listed as removed, and its usage still counts", async () => {
+      const m = await revokedWithUsage("remove-keep");
+      await revoke(m.id);
+      const before = await etag();
+      expect((await remove(m.id, "keep")).status).toBe(200);
+      expect((await listed()).find((x) => x.id === m.id)?.removed_at).toEqual(expect.any(Number));
+      expect(await w.sql("SELECT 1 FROM usage_daily WHERE machine_id = ?1", m.id)).toHaveLength(1);
+      expect(await etag()).toBe(before);
+      // Gone for good: it can't be changed, revoked or removed again.
+      expect((await remove(m.id, "delete")).status).toBe(404);
+      const rename = await w.fetch(`/api/machines/${m.id}`, {
+        ...jsonInit("PATCH", { name: "back" }),
+        cookie: admin.cookie,
+      });
+      expect(rename.status).toBe(404);
+    });
+
+    test("deleting its usage: the machine and its usage are gone", async () => {
+      const m = await revokedWithUsage("remove-delete");
+      await revoke(m.id);
+      const before = await etag();
+      expect((await remove(m.id, "delete")).status).toBe(200);
+      expect((await listed()).some((x) => x.id === m.id)).toBe(false);
+      expect(await w.sql("SELECT 1 FROM usage_daily WHERE machine_id = ?1", m.id)).toHaveLength(0);
+      // Dashboards holding the old totals fetch them again.
+      expect(await etag()).not.toBe(before);
+    });
   });
 });
 

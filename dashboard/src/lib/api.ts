@@ -202,6 +202,11 @@ export interface Machine {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  /**
+   * Set when the machine was removed and its usage kept: it's left off the
+   * Machines page, and its usage counts as "Removed machines".
+   */
+  removed_at: number | null;
   /** The tools this machine has reported usage for. */
   tools: string[];
   department: { id: string; name: string } | null;
@@ -209,7 +214,7 @@ export interface Machine {
   owner: { id: string; username: string } | null;
   status: "ok" | "late" | "never" | "revoked";
   update_available: boolean;
-  /** Whether the logged-in user can rename, move, revoke it and pick its owner. */
+  /** Whether the logged-in user can rename, move, revoke and remove it, and pick its owner. */
   can_manage: boolean;
 }
 

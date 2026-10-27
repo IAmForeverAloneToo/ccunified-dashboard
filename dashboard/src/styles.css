@@ -1596,6 +1596,37 @@ th button.sort:focus-visible {
   }
 }
 
+/* Picking one of a few options, each with a line about what it does. */
+.choices {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px 12px;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.choices legend {
+  font-weight: 550;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+
+label.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+label.choice input {
+  margin-top: 3px;
+}
+
+.choice-text {
+  display: grid;
+  gap: 2px;
+}
+
 /* A second, quieter line in a table cell, such as a machine's system. */
 th .sub,
 td .sub {
