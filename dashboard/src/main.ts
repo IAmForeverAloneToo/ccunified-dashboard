@@ -139,7 +139,7 @@ async function loadMe(): Promise<Me | null> {
 }
 
 function refreshApprovals(): void {
-  if (me?.role !== "admin") return;
+  if (!me || !managesSomething(me)) return;
   api<{ requests: PairingRequest[] }>("/pairing")
     .then((r) => {
       approvalsCount = r.requests.length;
@@ -304,7 +304,7 @@ async function render(): Promise<void> {
     );
     return;
   }
-  if (me.role === "admin" && approvalsTimer === undefined) {
+  if (managesSomething(me) && approvalsTimer === undefined) {
     refreshApprovals();
     approvalsTimer = window.setInterval(refreshApprovals, 30_000);
   }

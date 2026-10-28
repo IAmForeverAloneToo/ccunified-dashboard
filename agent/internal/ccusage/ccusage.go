@@ -69,7 +69,13 @@ type Runner struct {
 	Env []string
 	// Offline always uses ccusage's built-in price list.
 	Offline bool
+	// AsUser runs ccusage as another account (a system-wide install reading
+	// that account's usage; Linux only), so files it creates belong to it.
+	AsUser *Account
 }
+
+// Account is a user account's ids.
+type Account struct{ UID, GID int }
 
 // Locate finds ccusage next to the running program. CCUNIFIED_CCUSAGE
 // overrides the path (development and tests);
@@ -394,6 +400,7 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Path, args...)
 	hideWindow(cmd)
+	runAs(cmd, r.AsUser)
 	env := r.Env
 	if env == nil {
 		env = os.Environ()
@@ -427,6 +434,7 @@ func (r *Runner) ReportedVersion(ctx context.Context) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Path, "--version")
 	hideWindow(cmd)
+	runAs(cmd, r.AsUser)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

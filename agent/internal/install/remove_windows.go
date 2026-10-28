@@ -54,8 +54,21 @@ func removeDirCmdLine(dir string, delaySeconds int) string {
 		wait(delaySeconds), q, q, wait(5), q)
 }
 
+// removeDir deletes a system-wide install's folder, as RemoveProgram does,
+// and takes it off the computer's PATH.
+func removeDir(dir string) error {
+	if err := removeFromPath(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`, dir); err != nil {
+		return err
+	}
+	return removeDirLater(dir, 3)
+}
+
 func removeFromUserPath(dir string) error {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
+	return removeFromPath(registry.CURRENT_USER, `Environment`, dir)
+}
+
+func removeFromPath(root registry.Key, path, dir string) error {
+	k, err := registry.OpenKey(root, path, registry.QUERY_VALUE|registry.SET_VALUE)
 	if err != nil {
 		return err
 	}

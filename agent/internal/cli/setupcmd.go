@@ -2,12 +2,17 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/cloudflare"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/install"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/profiles"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prompt"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/schedule"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/setup"
@@ -29,8 +34,17 @@ func init() {
 	register(&Command{
 		Name:    "setup",
 		Summary: "Create a new dashboard, or connect this machine to an existing one",
-		Usage:   "ccunified setup [--no-schedule | --schedule-only]",
-		Run:     runSetup,
+		Usage: `ccunified setup [--no-schedule | --schedule-only]
+       ccunified setup --url URL --enroll-key KEY [--name NAME] [--interval 15|30|60] [--all-users | --this-user]
+
+With an enrollment key (from the dashboard's Machines page), setup asks no
+questions: this machine asks to join, and starts uploading once an admin
+approves it on the Approvals page. Run as root or SYSTEM (or with
+--all-users), it sets up every user account on the computer, each as its own
+machine. The options can also come from the environment: CCUNIFIED_URL,
+CCUNIFIED_ENROLL_KEY, CCUNIFIED_NAME, CCUNIFIED_INTERVAL and
+CCUNIFIED_ALL_USERS=1.`,
+		Run: runSetup,
 	})
 	register(&Command{
 		Name:    "server",
@@ -114,11 +128,41 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("setup", env)
 	scheduleOnly := fs.Bool("schedule-only", false, "only (re)install the background sync")
 	noSchedule := fs.Bool("no-schedule", false, "don't set up the background sync (run ccunified sync yourself)")
+	url := fs.String("url", os.Getenv("CCUNIFIED_URL"), "the dashboard's address (with --enroll-key)")
+	key := fs.String("enroll-key", os.Getenv("CCUNIFIED_ENROLL_KEY"), "join with this enrollment key, asking no questions")
+	name := fs.String("name", os.Getenv("CCUNIFIED_NAME"), "this machine's name on the dashboard (default: its hostname)")
+	interval := fs.Int("interval", envInt("CCUNIFIED_INTERVAL", 30), "sync every 15, 30 or 60 minutes")
+	allUsers := fs.Bool("all-users", os.Getenv("CCUNIFIED_ALL_USERS") == "1", "set up every user account on this computer (needs root or an administrator)")
+	thisUser := fs.Bool("this-user", false, "set up only this account, even as root or SYSTEM")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return &UsageError{Msg: "unexpected arguments"}
+	}
 	if *scheduleOnly && *noSchedule {
 		return &UsageError{Msg: "use either --no-schedule or --schedule-only, not both"}
+	}
+	if *allUsers && *thisUser {
+		return &UsageError{Msg: "use either --all-users or --this-user, not both"}
+	}
+	if *key != "" {
+		if *url == "" {
+			return &UsageError{Msg: "--enroll-key needs the dashboard's address too (--url)"}
+		}
+		o := setup.EnrollOptions{URL: *url, Key: strings.TrimSpace(*key), Name: *name, Interval: *interval}
+		p := prompt.New(strings.NewReader(""), env.Stdout)
+		if *allUsers || (profiles.SystemAccount() && !*thisUser) {
+			if !profiles.Privileged() {
+				return errors.New("setting up every account needs root (sudo) or an administrator's elevated window")
+			}
+			return setup.EnrollAllUsers(ctx, p, &setup.Hooks{}, allUsersHooks(*noSchedule), o)
+		}
+		h := hooks(nil)
+		if *noSchedule {
+			h.InstallSchedule = nil
+		}
+		return setup.EnrollUser(ctx, p, h, o)
 	}
 	p := prompt.New(env.Stdin, env.Stdout)
 	if *scheduleOnly {
@@ -166,4 +210,38 @@ func runServer(ctx context.Context, env *Env, args []string) error {
 		return setup.ServerRemove(ctx, p, cloudflareFactory)
 	}
 	return &UsageError{Msg: fmt.Sprintf("unknown server command %q", args[0])}
+}
+
+func envInt(name string, def int) int {
+	if n, err := strconv.Atoi(os.Getenv(name)); err == nil {
+		return n
+	}
+	return def
+}
+
+// allUsersHooks install the program, schedule and first sync for every account.
+func allUsersHooks(noSchedule bool) setup.AllUsersHooks {
+	h := setup.AllUsersHooks{
+		InstallProgram: func() (string, error) {
+			dir, err := install.ExeDir()
+			if err != nil {
+				return "", err
+			}
+			return install.InstallForAll(dir)
+		},
+		InstallSchedule: func(exe string, minutes int) (string, error) {
+			desc, err := schedule.SystemDefault(exe).Install(context.Background(), minutes)
+			if err == nil {
+				config.Log("schedule (all users): %s", desc)
+			}
+			return desc, err
+		},
+		SyncAll: func(ctx context.Context, exe string) (string, error) {
+			return runProgram(ctx, exe, "sync", "--all-users")
+		},
+	}
+	if noSchedule {
+		h.InstallSchedule = nil
+	}
+	return h
 }

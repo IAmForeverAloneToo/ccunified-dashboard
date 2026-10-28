@@ -59,14 +59,20 @@ func (c *Config) Validate() error {
 	if _, err := time.LoadLocation(c.Timezone); err != nil || c.Timezone == "" {
 		return fmt.Errorf("config: invalid time zone %q", c.Timezone)
 	}
-	ok := false
-	for _, v := range ValidIntervals {
-		ok = ok || v == c.SyncIntervalMinutes
-	}
-	if !ok {
-		return fmt.Errorf("config: sync interval must be 15, 30 or 60 minutes, not %d", c.SyncIntervalMinutes)
+	if err := ValidateInterval(c.SyncIntervalMinutes); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
+}
+
+// ValidateInterval checks a sync interval against ValidIntervals.
+func ValidateInterval(minutes int) error {
+	for _, v := range ValidIntervals {
+		if v == minutes {
+			return nil
+		}
+	}
+	return fmt.Errorf("sync interval must be 15, 30 or 60 minutes, not %d", minutes)
 }
 
 // NormalizeURL checks a dashboard address and returns it as "https://host".
@@ -96,6 +102,11 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadIn(dir)
+}
+
+// LoadIn reads config.json from a settings folder.
+func LoadIn(dir string) (*Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotConfigured
@@ -135,6 +146,10 @@ func writeJSON(name string, v any) error {
 	if err != nil {
 		return err
 	}
+	return writeJSONIn(dir, name, v)
+}
+
+func writeJSONIn(dir, name string, v any) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -197,6 +212,11 @@ func LoadState() *State {
 	if err != nil {
 		return &State{}
 	}
+	return LoadStateIn(dir)
+}
+
+// LoadStateIn reads state.json from a settings folder.
+func LoadStateIn(dir string) *State {
 	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if err != nil {
 		return &State{}

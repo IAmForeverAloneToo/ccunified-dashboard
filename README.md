@@ -33,7 +33,9 @@ side, with tokens and estimated cost per machine, per tool and per model.
 - **Only totals leave your machines.** Per day, tool and model: token counts
   and estimated cost. No prompts, code, file names or project names.
 - **Simple to add machines.** A new machine shows a short code; you approve it
-  on the dashboard.
+  on the dashboard. To add many, a script or deployment tool installs it with
+  an enrollment key, for one account or every account on a computer, and you
+  approve them all at once.
 - **Accounts with roles.** Admins and read-only viewers for the whole
   dashboard, and departments with managers, viewers and members who see only
   their department's or their own machines. Optional two-factor login.

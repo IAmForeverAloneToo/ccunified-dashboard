@@ -17,7 +17,24 @@ const (
 	lingerYes = "Linger=yes"
 )
 
+// Where a system-wide install's schedule goes (replaced in tests).
+var (
+	SystemUnitDir  = "/etc/systemd/system"
+	SystemCronFile = "/etc/cron.d/ccunified"
+)
+
+// systemctl runs systemctl for the user's units, or the system's.
+func (s *Scheduler) systemctl(ctx context.Context, args ...string) (string, error) {
+	if !s.System {
+		args = append([]string{"--user"}, args...)
+	}
+	return s.Run(ctx, "", "systemctl", args...)
+}
+
 func (s *Scheduler) unitDir() string {
+	if s.System {
+		return SystemUnitDir
+	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "systemd", "user")
 	}
@@ -39,9 +56,9 @@ Description=Upload Claude Code usage to the ccunified dashboard
 
 [Service]
 Type=oneshot
-ExecStart=%s sync --quiet
+ExecStart=%s %s
 Nice=10
-`, systemdQuote(s.Exe))
+`, systemdQuote(s.Exe), s.syncArgs())
 	calendar := fmt.Sprintf("*:0/%d", minutes)
 	if minutes == 60 {
 		calendar = "hourly"
@@ -61,7 +78,7 @@ WantedBy=timers.target
 }
 
 func (s *Scheduler) systemdAvailable(ctx context.Context) bool {
-	_, err := s.Run(ctx, "", "systemctl", "--user", "show-environment")
+	_, err := s.systemctl(ctx, "show-environment")
 	return err == nil
 }
 
@@ -78,13 +95,16 @@ func (s *Scheduler) installSystemd(ctx context.Context, minutes int) (string, er
 		return "", err
 	}
 	for _, args := range [][]string{
-		{"--user", "daemon-reload"},
-		{"--user", "enable", "--now", unitName + ".timer"},
-		{"--user", "restart", unitName + ".timer"},
+		{"daemon-reload"},
+		{"enable", "--now", unitName + ".timer"},
+		{"restart", unitName + ".timer"},
 	} {
-		if out, err := s.Run(ctx, "", "systemctl", args...); err != nil {
+		if out, err := s.systemctl(ctx, args...); err != nil {
 			return "", fmt.Errorf("systemctl %s failed: %v: %s", strings.Join(args, " "), err, out)
 		}
+	}
+	if s.System {
+		return fmt.Sprintf("Background sync of every account %s (systemd timer %s.timer)", intervalText(minutes), unitName), nil
 	}
 	return fmt.Sprintf("Background sync %s (systemd user timer %s.timer)", intervalText(minutes), unitName), nil
 }
@@ -120,10 +140,13 @@ func (s *Scheduler) EnableLinger(ctx context.Context, allowSudo bool) error {
 var calendarRe = regexp.MustCompile(`OnCalendar=\*:0/(\d+)|OnCalendar=(hourly)`)
 
 func (s *Scheduler) statusSystemd(ctx context.Context) Status {
-	if _, err := s.Run(ctx, "", "systemctl", "--user", "is-enabled", unitName+".timer"); err != nil {
+	if _, err := s.systemctl(ctx, "is-enabled", unitName+".timer"); err != nil {
 		return Status{}
 	}
 	st := Status{Installed: true, Kind: "systemd user timer"}
+	if s.System {
+		st.Kind = "systemd timer"
+	}
 	if b, err := os.ReadFile(filepath.Join(s.unitDir(), unitName+".timer")); err == nil {
 		if m := calendarRe.FindStringSubmatch(string(b)); m != nil {
 			n := 60
@@ -133,20 +156,20 @@ func (s *Scheduler) statusSystemd(ctx context.Context) Status {
 			st.Detail = intervalText(n)
 		}
 	}
-	if !s.LingerEnabled(ctx) {
+	if !s.System && !s.LingerEnabled(ctx) {
 		st.Detail += "; pauses while you're logged out (run: sudo loginctl enable-linger " + s.User + ")"
 	}
 	return st
 }
 
 func (s *Scheduler) removeSystemd(ctx context.Context) error {
-	s.Run(ctx, "", "systemctl", "--user", "disable", "--now", unitName+".timer")
+	s.systemctl(ctx, "disable", "--now", unitName+".timer")
 	for _, f := range []string{unitName + ".timer", unitName + ".service"} {
 		if err := os.Remove(filepath.Join(s.unitDir(), f)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
-	s.Run(ctx, "", "systemctl", "--user", "daemon-reload")
+	s.systemctl(ctx, "daemon-reload")
 	return nil
 }
 
@@ -160,10 +183,17 @@ func (s *Scheduler) CronLine(minutes int) string {
 	if minutes == 60 {
 		spec = fmt.Sprintf("%d * * * *", rand.IntN(60))
 	}
-	return fmt.Sprintf("%s %s sync --quiet %s", spec, shellQuote(s.Exe), cronMark)
+	if s.System {
+		return fmt.Sprintf("%s root %s %s %s", spec, shellQuote(s.Exe), s.syncArgs(), cronMark)
+	}
+	return fmt.Sprintf("%s %s %s %s", spec, shellQuote(s.Exe), s.syncArgs(), cronMark)
 }
 
 func (s *Scheduler) cronAvailable(ctx context.Context) bool {
+	if s.System {
+		info, err := os.Stat(filepath.Dir(SystemCronFile))
+		return err == nil && info.IsDir()
+	}
 	_, err := s.Run(ctx, "", "sh", "-c", "command -v crontab")
 	return err == nil
 }
@@ -197,6 +227,13 @@ func (s *Scheduler) writeCrontab(ctx context.Context, lines []string) error {
 }
 
 func (s *Scheduler) installCron(ctx context.Context, minutes int) (string, error) {
+	if s.System {
+		text := "# Uploads every account's AI coding tool usage to the ccunified dashboard.\n" + s.CronLine(minutes) + "\n"
+		if err := os.WriteFile(SystemCronFile, []byte(text), 0o644); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Background sync of every account %s (%s)", intervalText(minutes), SystemCronFile), nil
+	}
 	lines, err := s.readCrontab(ctx)
 	if err != nil {
 		return "", err
@@ -209,6 +246,10 @@ func (s *Scheduler) installCron(ctx context.Context, minutes int) (string, error
 
 func (s *Scheduler) statusCron(ctx context.Context) Status {
 	out, err := s.Run(ctx, "", "crontab", "-l")
+	if s.System {
+		b, readErr := os.ReadFile(SystemCronFile)
+		out, err = string(b), readErr
+	}
 	if err != nil {
 		return Status{}
 	}
@@ -229,6 +270,9 @@ func (s *Scheduler) statusCron(ctx context.Context) Status {
 func (s *Scheduler) removeCron(ctx context.Context) error {
 	if !s.statusCron(ctx).Installed {
 		return nil
+	}
+	if s.System {
+		return os.Remove(SystemCronFile)
 	}
 	lines, err := s.readCrontab(ctx)
 	if err != nil {

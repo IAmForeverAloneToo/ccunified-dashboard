@@ -327,6 +327,52 @@ async function seedDemo(db) {
     )
     .bind(randomUUID(), sha256(randomUUID()), now - 60e3, now + 9 * 60e3)
     .run();
+
+  // An enrollment key for Engineering's laptops, and machines that enrolled
+  // with it, waiting to be approved; and an old, revoked key.
+  const keyId = randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO enrollment_keys (id, name, key_hash, department_id, owner_id, created_by, created_at, expires_at, max_uses, uses, last_used_at) VALUES (?1, 'Engineering laptops', ?2, ?3, NULL, ?4, ?5, ?6, 50, 3, ?7)",
+    )
+    .bind(
+      keyId,
+      sha256(randomUUID()),
+      departments.Engineering,
+      userIds.morgan,
+      now - 2 * 864e5,
+      now + 28 * 864e5,
+      now - 20 * 60e3,
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO enrollment_keys (id, name, key_hash, department_id, owner_id, created_by, created_at, expires_at, max_uses, uses, last_used_at, revoked_at) VALUES (?1, 'Pilot', ?2, NULL, NULL, ?3, ?4, NULL, NULL, 1, ?4, ?5)",
+    )
+    .bind(randomUUID(), sha256(randomUUID()), userIds.demo, now - 30 * 864e5, now - 20 * 864e5)
+    .run();
+  for (const [i, [name, os]] of [
+    ["eng-laptop-14 (alice)", "linux"],
+    ["eng-laptop-15 (bob)", "linux"],
+    ["ENG-WS-07 (dana)", "windows"],
+  ].entries()) {
+    await db
+      .prepare(
+        "INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch, agent_version, sync_interval_minutes, client_ip, created_at, expires_at, status, department_id, enrollment_key_id) VALUES (?1, ?2, ?3, ?4, ?5, 'amd64', '0.1.0-demo', 30, '198.51.100.7', ?6, ?7, 'pending', ?8, ?9)",
+      )
+      .bind(
+        randomUUID(),
+        sha256(randomUUID()),
+        `ENRL-00${i}X`,
+        name,
+        os,
+        now - (30 - i) * 60e3,
+        now + 30 * 864e5,
+        departments.Engineering,
+        keyId,
+      )
+      .run();
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

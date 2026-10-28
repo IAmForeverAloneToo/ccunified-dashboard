@@ -227,7 +227,6 @@ export interface MachinesResponse {
 
 export interface PairingRequest {
   id: string;
-  user_code: string;
   machine_name: string;
   os: string;
   arch: string;
@@ -235,6 +234,26 @@ export interface PairingRequest {
   client_ip: string | null;
   created_at: number;
   expires_at: number;
+  department: { id: string; name: string } | null;
+  owner: { id: string; username: string } | null;
+  /** The enrollment key it joined with; null for a machine that shows a code. */
+  key: { id: string; name: string } | null;
+}
+
+export interface EnrollmentKey {
+  id: string;
+  name: string;
+  department: { id: string; name: string } | null;
+  owner: { id: string; username: string } | null;
+  created_by: string | null;
+  created_at: number;
+  expires_at: number | null;
+  max_uses: number | null;
+  uses: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+  /** Machines that enrolled with it and wait for approval. */
+  waiting: number;
 }
 
 export interface SettingsResponse {

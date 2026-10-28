@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/ccusage"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/client"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/config"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/enroll"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/payload"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/prices"
+	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/profiles"
 	"github.com/IAmForeverAloneToo/ccunified-dashboard/agent/internal/syncer"
 )
 
@@ -20,16 +23,26 @@ func init() {
 	register(&Command{
 		Name:    "sync",
 		Summary: "Upload this machine's usage now (the background schedule runs this)",
-		Usage:   "ccunified sync [--full] [--quiet]",
+		Usage:   "ccunified sync [--full] [--quiet] [--all-users]",
 		Run:     runSync,
 	})
 }
 
-// RunSync performs one sync with the saved configuration.
+// errNoUsageYet means an account of a system-wide install has no usage
+// yet, so it hasn't asked to join.
+var errNoUsageYet = errors.New("no usage on this account yet")
+
+// RunSync performs one sync with the saved configuration. If this machine
+// is waiting for approval to join, it asks the dashboard first (and returns
+// enroll.ErrWaiting while it waits).
 func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, err
+	account := accountFromEnv()
+	if account == nil {
+		if _, err := config.Load(); errors.Is(err, config.ErrNotConfigured) {
+			if _, err := config.LoadPending(); errors.Is(err, config.ErrNoPending) {
+				return nil, config.ErrNotConfigured
+			}
+		}
 	}
 	unlock, err := config.Lock()
 	if err != nil {
@@ -38,6 +51,16 @@ func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
 	defer unlock()
 
 	runner, err := ccusage.Locate()
+	if err != nil {
+		return nil, err
+	}
+	if account != nil {
+		runner.Env = profiles.Env(os.Environ(), *account)
+		if account.UID >= 0 {
+			runner.AsUser = &ccusage.Account{UID: account.UID, GID: account.GID}
+		}
+	}
+	cfg, err := connect(ctx, runner, account)
 	if err != nil {
 		return nil, err
 	}
@@ -72,18 +95,71 @@ func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
 	return res, nil
 }
 
+// connect returns this machine's settings. Without any, it follows up on a
+// request to join that waits for approval; an account of a system-wide
+// install that has usage asks to join first.
+func connect(ctx context.Context, runner *ccusage.Runner, account *profiles.Profile) (*config.Config, error) {
+	cfg, err := config.Load()
+	if !errors.Is(err, config.ErrNotConfigured) {
+		return cfg, err
+	}
+	pend, err := config.LoadPending()
+	if err == nil {
+		return enroll.Check(ctx, pend)
+	}
+	if !errors.Is(err, config.ErrNoPending) || account == nil {
+		return nil, config.ErrNotConfigured
+	}
+	sys, err := config.LoadSystem()
+	if err != nil {
+		return nil, err
+	}
+	// Only accounts that use a coding tool join (not every account on the computer).
+	report, err := runner.Daily(ctx, ccusage.Options{Timezone: "UTC", AllTools: true, Offline: true})
+	if err != nil {
+		return nil, err
+	}
+	if len(report.Days) == 0 {
+		return nil, errNoUsageYet
+	}
+	name := profiles.MachineName(profiles.Hostname(), *account)
+	if _, err := enroll.Request(ctx, sys.DashboardURL, sys.EnrollKey, name, sys.SyncIntervalMinutes, time.Now()); err != nil {
+		return nil, err
+	}
+	return nil, enroll.ErrWaiting
+}
+
 func runSync(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("sync", env)
 	full := fs.Bool("full", false, "upload the whole history, not just the last 7 days")
 	quiet := fs.Bool("quiet", false, "print nothing (used by the background schedule)")
+	allUsers := fs.Bool("all-users", false, "sync every user account (a system-wide install; needs root or SYSTEM)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return &UsageError{Msg: "unexpected arguments"}
 	}
+	if *allUsers {
+		return syncAllUsers(ctx, env, *full, *quiet)
+	}
 	res, err := RunSync(ctx, *full)
-	if err != nil {
+	switch {
+	case errors.Is(err, enroll.ErrWaiting):
+		if !*quiet {
+			if pend, err := config.LoadPending(); err == nil {
+				env.Printf("Waiting for approval on %s as %q.\n", pend.DashboardURL, pend.MachineName)
+			} else {
+				env.Printf("Waiting for approval on the dashboard.\n")
+			}
+		}
+		return nil
+	case errors.Is(err, errNoUsageYet):
+		if !*quiet {
+			env.Printf("No usage on this account yet; it asks to join once there is some.\n")
+		}
+		return nil
+	case err != nil:
 		return err
 	}
 	if *quiet {

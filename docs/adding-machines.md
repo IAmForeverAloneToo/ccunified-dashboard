@@ -54,6 +54,78 @@ the dashboard.
 The code works for 10 minutes. If it expires, the machine offers a new one.
 Only approve codes you can see on your own machine's screen.
 
+## Add many machines with a script
+
+For a deployment tool, a login script or anything else that sets up many
+machines, use an **enrollment key** instead of codes. Machines ask to join
+without anyone typing anything, and you approve them on the dashboard, one at
+a time or all at once.
+
+1. **Create a key.** On the **Machines** page, under *Add many machines*,
+   click **Create an enrollment key**. Give it a name and pick the
+   **Department** and **Owner** the machines get, when the key **stops
+   working** (30 days unless you choose otherwise), and how many **machines it
+   can add**. Admins can pick any department, or none; managers pick one they
+   manage. The key is shown once, with the commands that use it.
+
+2. **Run the command on each machine**, or give it to your deployment tool.
+   The commands install ccunified and set it up without asking anything:
+
+   | | |
+   |---|---|
+   | Linux, one account | `curl -fsSL …/install.sh \| CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_… sh` |
+   | Linux, every account | `curl -fsSL …/install.sh \| sudo env CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_… sh` |
+   | Windows, one account | `$env:CCUNIFIED_URL='https://usage.example.com'; $env:CCUNIFIED_ENROLL_KEY='ccu_e_…'; irm …/install.ps1 \| iex` |
+   | Windows, every account | The same, run as SYSTEM (as Intune or Group Policy run scripts), or in an elevated window with `$env:CCUNIFIED_ALL_USERS='1'` added |
+
+   `CCUNIFIED_NAME` sets the machine's name (default: its hostname) and
+   `CCUNIFIED_INTERVAL` how often it uploads (15, 30 or 60 minutes; default
+   30). On a machine that already has ccunified, run
+   `ccunified setup --url https://usage.example.com --enroll-key ccu_e_…`
+   instead (see [the commands](commands.md#ccunified-setup)).
+
+3. **Approve them.** On the **Approvals** page, under *Joined with an
+   enrollment key*, tick the machines (the box in the header ticks them all)
+   and click **Approve**. Each request waits up to 30 days. A name another
+   machine already has gets a number, like `LAPTOP-2`.
+
+4. **They start uploading on their own**, at their first sync after you
+   approve them (within their upload interval), with their whole history.
+
+Running the command again on a machine changes nothing. If its request was
+denied, or expired, running it again asks again.
+
+### Every account on a computer
+
+Run as root on Linux, or as SYSTEM on Windows (or with `--all-users` in an
+elevated window), setup installs ccunified for the whole computer:
+
+- **Each account is its own machine** on the dashboard, named like
+  `LAPTOP (alice)`. Each account that uses a coding tool asks to join; one
+  without usage asks once it has some, and so do accounts added later.
+  Accounts where someone set ccunified up themselves are left alone, so no
+  usage is counted twice.
+- **One background sync for the computer** runs as root or SYSTEM, whether or
+  not anyone is logged in: a systemd timer (or `/etc/cron.d/ccunified`) on
+  Linux, the Task Scheduler task `ccunified sync (all users)` on Windows.
+- **People's accounts only:** on Linux, accounts with an id of 1000 or more in
+  `/etc/passwd`, and folders in `/home` (for accounts from a directory
+  service); on Windows, the user profiles Windows lists.
+- **On Linux, ccusage runs as each account**, so it reads only that account's
+  files and leaves nothing owned by root in its home.
+- The program goes to `/opt/ccunified` (with the command in
+  `/usr/local/bin`) or `%ProgramFiles%\ccunified`, and the settings, including
+  the enrollment key, to a folder only administrators can read:
+  `/var/lib/ccunified` or `%ProgramData%\ccunified`.
+
+`ccunified status --all-users` shows where each account stands, and
+`ccunified uninstall --all-users` removes it all.
+
+**Keep keys like passwords.** Anyone with a key can ask to add machines (but
+nothing uploads until you approve them). Revoke a key on the Machines page
+when you're done with it: machines still waiting with it are denied, and
+those you approved keep uploading.
+
 ## Linux: keep syncing while logged out
 
 On Linux the background sync is a systemd *user* timer, and systemd stops a

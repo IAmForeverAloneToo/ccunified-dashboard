@@ -380,7 +380,8 @@ test.describe("tools other than Claude Code", () => {
   test("the Machines page lists each machine's tools", async ({ page }) => {
     await logIn(page);
     await page.getByRole("link", { name: "Machines" }).first().click();
-    const row = (name: string) => page.locator("tbody tr").filter({ hasText: name });
+    const list = page.locator("section.card").filter({ has: page.locator("#machines-title") });
+    const row = (name: string) => list.locator("tbody tr").filter({ hasText: name });
     await expect(row("Office PC")).toContainText("Claude Code, Codex");
     await expect(row("Laptop")).toContainText("Claude Code, Gemini CLI");
     await expect(row("Build server")).toContainText("Claude Code");
@@ -874,8 +875,11 @@ test.describe("access control", () => {
       return out;
     });
   }
-  const navLinks = (page: Page) =>
-    page.getByRole("navigation", { name: "Main" }).getByRole("link").allInnerTexts();
+  // Without the Approvals link's count of waiting machines.
+  const navLinks = async (page: Page) =>
+    (await page.getByRole("navigation", { name: "Main" }).getByRole("link").allInnerTexts()).map(
+      (t) => t.replace(/\s*\d+$/, ""),
+    );
   const machineNames = async (page: Page) => {
     await page.goto(new URL("/machines", demo.url).href);
     await expect(page.locator("tbody tr").first()).toBeVisible();
@@ -960,7 +964,7 @@ test.describe("access control", () => {
     ]);
     await owner.selectOption({ label: "riley" });
     await page.getByLabel("Code shown on the machine").fill("K7QX82MD");
-    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator("form").getByRole("button", { name: "Approve" }).click();
     await expect(page.getByText("Approved Studio PC")).toBeVisible();
     const [row] = (
       await demo.db
@@ -1285,5 +1289,124 @@ test.describe("removing machines", () => {
         await demo.db.prepare("DELETE FROM machines WHERE id = ?1").bind(id).run();
       }
     }
+  });
+});
+
+test.describe("adding many machines", () => {
+  /** A machine asking to join with an enrollment key, as `ccunified setup --enroll-key` does. */
+  async function enroll(key: string, name: string) {
+    const res = await fetch(new URL("/agent/enroll", demo.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enroll_key: key,
+        machine_name: name,
+        os: "linux",
+        arch: "amd64",
+        agent_version: "0.7.0",
+        sync_interval_minutes: 30,
+      }),
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { device_code: string; machine_name: string };
+  }
+  const poll = async (deviceCode: string) =>
+    (
+      (await (
+        await fetch(new URL("/agent/pair/poll", demo.url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ device_code: deviceCode }),
+        })
+      ).json()) as { status: string }
+    ).status;
+
+  test("an admin creates a key, machines enroll with it, and are approved together", async ({
+    page,
+  }) => {
+    await logIn(page);
+    await page.goto(new URL("/machines", demo.url).href);
+    const card = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Add many machines" }) });
+    await card.getByRole("button", { name: "Create an enrollment key" }).click();
+    let dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Name").fill("Build farm");
+    await dialog.getByLabel("Department").selectOption({ label: "Engineering" });
+    await dialog.getByLabel("Machines it can add").fill("0");
+    await dialog.getByRole("button", { name: "Create" }).click();
+    await expect(dialog.getByText("Enter a whole number of machines")).toBeVisible();
+    await dialog.getByLabel("Machines it can add").fill("2");
+    await dialog.getByRole("button", { name: "Create" }).click();
+
+    // Shown once, with the commands that use it.
+    dialog = page.getByRole("dialog", { name: /Enrollment key “Build farm”/ });
+    await expect(dialog.getByText("it isn't shown again")).toBeVisible();
+    const key = (await dialog.locator(".command code").first().textContent()) ?? "";
+    expect(key).toMatch(/^ccu_e_/);
+    await expect(dialog.locator(".command code").nth(1)).toHaveText(
+      `curl -fsSL https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.sh | sudo env CCUNIFIED_URL=${new URL(demo.url).origin} CCUNIFIED_ENROLL_KEY=${key} sh`,
+    );
+    await dialog.getByRole("button", { name: "Done" }).click();
+    const row = card.locator("tbody tr").filter({ hasText: "Build farm" });
+    await expect(row).toContainText("Engineering");
+    await expect(row).toContainText("0 of 2");
+
+    const a = await enroll(key, "farm-01 (ci)");
+    const b = await enroll(key, "farm-02 (ci)");
+    await page.reload();
+    await expect(row).toContainText("2 of 2");
+    await expect(row.getByRole("link", { name: "2" })).toBeVisible();
+
+    await page.goto(new URL("/approve", demo.url).href);
+    const list = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Joined with an enrollment key" }) });
+    for (const name of ["farm-01 (ci)", "farm-02 (ci)"]) {
+      await list.getByRole("checkbox", { name: `Select ${name}` }).check();
+    }
+    await list.getByRole("button", { name: "Approve 2" }).click();
+    await expect(page.getByText("Approved 2 machines")).toBeVisible();
+    await expect(list).not.toContainText("farm-01 (ci)");
+    expect(await poll(a.device_code)).toBe("approved");
+    expect(await poll(b.device_code)).toBe("approved");
+  });
+
+  test("managers decide for their departments only; revoking a key denies who still waits", async ({
+    page,
+  }) => {
+    await logIn(page, "morgan");
+    await page.goto(new URL("/approve", demo.url).href);
+    const list = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Joined with an enrollment key" }) });
+    await expect(list.locator("tbody tr")).toHaveCount(3);
+    await list.getByRole("checkbox", { name: "Select eng-laptop-15 (bob)" }).check();
+    await list.getByRole("button", { name: "Deny 1" }).click();
+    await expect(page.getByText("Denied 1 machine")).toBeVisible();
+    await expect(list.locator("tbody tr")).toHaveCount(2);
+    // No "waiting with a code" list for managers.
+    await expect(page.getByRole("heading", { name: "Waiting with a code" })).toHaveCount(0);
+
+    await page.goto(new URL("/machines", demo.url).href);
+    const card = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Add many machines" }) });
+    const row = card.locator("tbody tr").filter({ hasText: "Engineering laptops" });
+    await row.getByRole("button", { name: "Revoke" }).click();
+    await expect(page.getByRole("dialog")).toContainText(
+      "The 2 machines still waiting with it are denied",
+    );
+    await page.getByRole("dialog").getByRole("button", { name: "Revoke" }).click();
+    await expect(row).toContainText("Revoked");
+    await page.goto(new URL("/approve", demo.url).href);
+    await expect(list).toContainText("No machines are waiting right now.");
+  });
+
+  test("people who don't manage anything can't make keys", async ({ page }) => {
+    await logIn(page, "casey");
+    await page.goto(new URL("/machines", demo.url).href);
+    await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Add many machines" })).toHaveCount(0);
   });
 });

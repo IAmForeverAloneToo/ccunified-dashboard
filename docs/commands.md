@@ -21,6 +21,14 @@ asks before replacing its settings.
 |---|---|
 | `--no-schedule` | Don't set up the background sync, for when you run `ccunified sync` from your own scheduler |
 | `--schedule-only` | Only set up (or repair) the background sync, using the existing settings |
+| `--url URL --enroll-key KEY` | Join that dashboard with an enrollment key, asking nothing; it starts uploading once approved (see [Add many machines](adding-machines.md#add-many-machines-with-a-script)). Running it again changes nothing |
+| `--name NAME` | With a key: this machine's name on the dashboard (default: its hostname) |
+| `--interval 15\|30\|60` | With a key: how often to upload, in minutes (default 30) |
+| `--all-users` | With a key: set up every account on the computer, each as its own machine. The default when run as root or SYSTEM; needs root or an elevated window |
+| `--this-user` | With a key: set up only this account, even as root or SYSTEM |
+
+The key options can also come from `CCUNIFIED_URL`, `CCUNIFIED_ENROLL_KEY`,
+`CCUNIFIED_NAME`, `CCUNIFIED_INTERVAL` and `CCUNIFIED_ALL_USERS=1`.
 
 ### `ccunified sync`
 
@@ -38,17 +46,26 @@ A normal sync re-sends the last 7 days. The first sync on a machine, the
 first after the dashboard's time zone changes, and the first after the
 dashboard starts accepting every tool send the whole history still on disk.
 
+A machine that joined with an enrollment key and waits for approval asks the
+dashboard instead, and starts uploading once it's approved.
+
 | Option | |
 |---|---|
 | `--full` | Send the whole history, not just the last 7 days |
 | `--quiet` | Print nothing (used by the background sync) |
+| `--all-users` | Sync every account of a computer set up for all users (as root or SYSTEM; its background sync runs this) |
 
 ### `ccunified status`
 
 Shows the dashboard address, this machine's name, the time zone, the upload
 interval, the state of the background sync, the last upload and any problem
 since, the tools this machine has reported usage for, whether an update is
-available, and whether the bundled ccusage passed its integrity check.
+available, and whether the bundled ccusage passed its integrity check. While
+the machine waits for approval, it says so.
+
+On a computer set up for every account, `ccunified status --all-users` (the
+default where this account isn't set up itself) shows the dashboard, the
+background sync and where each account stands.
 
 ### `ccunified config`
 
@@ -78,6 +95,7 @@ the machine on the dashboard to stop its key from ever working again.
 | Option | |
 |---|---|
 | `--yes` | Don't ask for confirmation |
+| `--all-users` | Remove a setup for every account: its background sync, every account's settings and the program (needs root or an elevated window). The default where this account isn't set up itself |
 
 ### `ccunified version`
 
@@ -138,6 +156,15 @@ changed.
 | Last upload (`state.json`) and log (`ccunified.log`, rotated at 1 MiB) | same folder as the settings | same folder as the settings |
 | Background sync | Task Scheduler task `ccunified sync (<your user name>)`, running the windowless `ccunifiedw.exe` | systemd user timer `ccunified-sync.timer`, or a crontab line marked `# ccunified-sync` |
 
+Set up for every account on the computer:
+
+| What | Windows | Linux |
+|---|---|---|
+| Program | `%ProgramFiles%\ccunified\` | `/opt/ccunified/`, linked as `/usr/local/bin/ccunified` |
+| Settings (`system.json`, with the enrollment key; readable only by administrators), log | `%ProgramData%\ccunified\` | `/var/lib/ccunified/` |
+| Each account's settings and state | `%ProgramData%\ccunified\users\<name>\` | `/var/lib/ccunified/users/<name>/` |
+| Background sync | Task Scheduler task `ccunified sync (all users)`, running as SYSTEM | systemd timer `ccunified-sync.timer`, or `/etc/cron.d/ccunified` |
+
 ## Environment variables
 
 | Variable | Effect |
@@ -146,6 +173,9 @@ changed.
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its data, if not in the default place (read by ccusage) |
 | `CODEX_HOME` and the like | Where other tools keep their data, if not in the default place; ccusage reads the same variables the tools themselves use |
 | `CCUNIFIED_NO_SETUP=1` | Installers only: install without starting `ccunified setup` |
+| `CCUNIFIED_URL`, `CCUNIFIED_ENROLL_KEY` | Join that dashboard with an enrollment key, asking nothing (installers and `ccunified setup`) |
+| `CCUNIFIED_NAME`, `CCUNIFIED_INTERVAL` | With a key: the machine's name and upload interval |
+| `CCUNIFIED_ALL_USERS=1` | With a key: set up every account on the computer (needs root or an elevated window; as root or SYSTEM, the default) |
 
 Variables used for testing and development are listed in
 [Development](development.md#environment-variables).

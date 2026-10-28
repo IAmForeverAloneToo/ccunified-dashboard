@@ -16,6 +16,9 @@ import (
 
 // WindowsTaskName is per user, so several people on one PC don't collide.
 func (s *Scheduler) WindowsTaskName() string {
+	if s.System {
+		return "ccunified sync (all users)"
+	}
 	return fmt.Sprintf("ccunified sync (%s)", s.User)
 }
 
@@ -36,11 +39,30 @@ func xmlEscape(v string) string {
 }
 
 // WindowsTaskXML is the Task Scheduler definition for the background sync.
+// A user's sync also runs when they log on; a system-wide one runs as
+// SYSTEM, also when the computer starts.
 func (s *Scheduler) WindowsTaskXML(minutes int, now time.Time, domainUser string) string {
+	extraTrigger := fmt.Sprintf(`<LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>%s</UserId>
+      <Delay>PT2M</Delay>
+    </LogonTrigger>`, xmlEscape(domainUser))
+	principal := `<LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>`
+	description := "Uploads this computer's Claude Code usage to your ccunified dashboard."
+	if s.System {
+		extraTrigger = `<BootTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT5M</Delay>
+    </BootTrigger>`
+		principal = `<UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>`
+		description = "Uploads every account's AI coding tool usage to the ccunified dashboard."
+	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Uploads this computer's Claude Code usage to your ccunified dashboard.</Description>
+    <Description>%s</Description>
   </RegistrationInfo>
   <Triggers>
     <TimeTrigger>
@@ -51,16 +73,11 @@ func (s *Scheduler) WindowsTaskXML(minutes int, now time.Time, domainUser string
       <StartBoundary>%s</StartBoundary>
       <Enabled>true</Enabled>
     </TimeTrigger>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <UserId>%s</UserId>
-      <Delay>PT2M</Delay>
-    </LogonTrigger>
+    %s
   </Triggers>
   <Principals>
     <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
+      %s
     </Principal>
   </Principals>
   <Settings>
@@ -85,11 +102,12 @@ func (s *Scheduler) WindowsTaskXML(minutes int, now time.Time, domainUser string
   <Actions Context="Author">
     <Exec>
       <Command>%s</Command>
-      <Arguments>sync --quiet</Arguments>
+      <Arguments>%s</Arguments>
     </Exec>
   </Actions>
 </Task>
-`, minutes, now.Format("2006-01-02T15:04:05"), xmlEscape(domainUser), xmlEscape(s.windowlessExe()))
+`, description, minutes, now.Format("2006-01-02T15:04:05"), extraTrigger, principal,
+		xmlEscape(s.windowlessExe()), s.syncArgs())
 }
 
 // utf16File encodes text as UTF-16LE with a byte-order mark, the encoding

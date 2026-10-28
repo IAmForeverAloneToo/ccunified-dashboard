@@ -52,12 +52,45 @@ jobs:
       - run: npm run rehearsal
       - name: Dashboard tests in Chrome and Firefox
         run: npm run test:browser
+      # Last, as it leaves files owned by root: real accounts, ccusage run as each.
+      - name: Every account on a computer (the rehearsal as root)
+        working-directory: e2e
+        run: sudo env "PATH=$PATH" "HOME=$HOME" npx playwright test --project=rehearsal -g "creates the dashboard|admin logs in|every account"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: browser-test-results
           path: e2e/test-results/
           if-no-files-found: ignore
+
+  all-users-windows:
+    name: Every account on a computer (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          check-latest: true
+      - name: Install npm (version from package.json packageManager)
+        run: npm install -g "$(node -p "require('./package.json').packageManager")"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: npm ci
+      - run: npm run build -w dashboard
+      - name: Build ccunified, with the pinned ccusage beside it
+        working-directory: agent
+        shell: bash
+        run: |
+          go run ./tools/fetchccusage
+          mkdir -p ../all-users-bin
+          go build -o ../all-users-bin/ccunified.exe ./cmd/ccunified
+          cp internal/ccusage/bin/windows-amd64/ccusage.exe ../all-users-bin/
+      # The runner's account is an administrator; the scheduled task runs as SYSTEM.
+      - name: Set up every account, and let the SYSTEM task upload
+        run: node e2e/windows-all-users.mjs all-users-bin
 
   agent:
     name: Agent (${{ matrix.os }})

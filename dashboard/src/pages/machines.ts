@@ -9,10 +9,11 @@ import {
   type Summary,
   type User,
 } from "../lib/api";
-import { type Child, confirmDialog, fill, h, openDialog, toast } from "../lib/dom";
+import { type Child, command, confirmDialog, fill, h, openDialog, toast } from "../lib/dom";
 import { compactNumber, dateTime, OS_LABEL, relativeTime } from "../lib/format";
 import { toolList } from "../lib/tools";
 import type { PageContext } from "../main";
+import { enrollmentCard } from "./enrollment";
 import { machineSeries } from "./overview";
 
 const STATUS: Record<Machine["status"], string> = {
@@ -35,29 +36,6 @@ export function statusBadge(m: Machine): HTMLElement {
     h("span", { class: "dot", "aria-hidden": "true" }),
     STATUS[m.status],
   );
-}
-
-function copyButton(text: string): HTMLButtonElement {
-  return h(
-    "button",
-    {
-      type: "button",
-      class: "small",
-      onclick: async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          toast("Copied");
-        } catch {
-          toast("Couldn't copy. Select the text and copy it yourself.");
-        }
-      },
-    },
-    "Copy",
-  );
-}
-
-function command(text: string): HTMLElement {
-  return h("div", { class: "command" }, h("pre", null, h("code", null, text)), copyButton(text));
 }
 
 export function addMachineCard(repo: string, canApprove: boolean): HTMLElement {
@@ -99,7 +77,7 @@ type SortKey = "name" | "department" | "owner" | "status" | "seen" | "tokens";
 export async function machinesPage(ctx: PageContext) {
   const admin = isAdmin(ctx.me);
   const list = h("section", { class: "card", "aria-labelledby": "machines-title" });
-  const addSlot = h("div");
+  const addSlot = h("div", { class: "stack" });
   ctx.main.append(
     h(
       "div",
@@ -163,7 +141,14 @@ export async function machinesPage(ctx: PageContext) {
     // Removed machines whose usage was kept only count in the Overview.
     m.machines = m.machines.filter((x) => x.removed_at === null);
     data = { m, tokens30, tools: summary.tools, departments: deps.departments };
-    addSlot.replaceChildren(addMachineCard(m.source_repo, managesSomething(ctx.me)));
+    if (!addSlot.hasChildNodes()) {
+      addSlot.append(addMachineCard(m.source_repo, managesSomething(ctx.me)));
+      if (managesSomething(ctx.me)) {
+        const keys = enrollmentCard(ctx.me, m.source_repo, deps.departments);
+        addSlot.append(keys.element);
+        await keys.load();
+      }
+    }
     draw();
   }
 

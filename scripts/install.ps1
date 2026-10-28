@@ -2,6 +2,18 @@
 #
 #   irm https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.ps1 | iex
 #
+# To add many machines from a script, with an enrollment key from the
+# dashboard's Machines page (no questions asked; an admin approves them):
+#
+#   $env:CCUNIFIED_URL = 'https://usage.example.com'; $env:CCUNIFIED_ENROLL_KEY = 'ccu_e_…'
+#   irm …/install.ps1 | iex
+#
+# Run as SYSTEM (as Intune or Group Policy run scripts), or with
+# $env:CCUNIFIED_ALL_USERS = '1' in an elevated window, that sets up every
+# user account on the computer (each with usage is its own machine on the
+# dashboard), with the program in %ProgramFiles%\ccunified. Optional:
+# CCUNIFIED_NAME, CCUNIFIED_INTERVAL (15, 30, 60).
+#
 # Environment overrides (testing, forks):
 #   CCUNIFIED_REPO           owner/name of the GitHub repository
 #   CCUNIFIED_DOWNLOAD_BASE  where the release files are (default: the latest GitHub release)
@@ -18,7 +30,19 @@
     $base = if ($env:CCUNIFIED_DOWNLOAD_BASE) { $env:CCUNIFIED_DOWNLOAD_BASE } else { "https://github.com/$repo/releases/latest/download" }
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
     $asset = "ccunified_windows_$arch.zip"
-    $dir = Join-Path $env:LOCALAPPDATA 'Programs\ccunified'
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $elevated = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $enroll = [bool]$env:CCUNIFIED_ENROLL_KEY
+    $allUsers = $enroll -and ($identity.IsSystem -or $env:CCUNIFIED_ALL_USERS -eq '1')
+    if ($env:CCUNIFIED_ALL_USERS -eq '1' -and -not $elevated) {
+        throw 'Installing for all users needs an elevated window (Run as administrator).'
+    }
+    if ($allUsers) {
+        # For every account: somewhere they can all run it.
+        $dir = Join-Path $env:ProgramFiles 'ccunified'
+    } else {
+        $dir = Join-Path $env:LOCALAPPDATA 'Programs\ccunified'
+    }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ccunified-' + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
 
@@ -52,9 +76,14 @@
             Move-Item -Force $_.FullName $target
         }
 
-        # Add the folder to the user's PATH, keeping the value's registry type
-        # (setting it through [Environment] would expand %VARIABLES% in it).
-        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        # Add the folder to the user's PATH (the computer's, for all users),
+        # keeping the value's registry type (setting it through [Environment]
+        # would expand %VARIABLES% in it).
+        if ($allUsers) {
+            $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
+        } else {
+            $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        }
         $raw = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
         $entries = @($raw -split ';' | Where-Object { $_ })
         if (-not ($entries | Where-Object { $_.TrimEnd('\') -ieq $dir })) {
@@ -76,6 +105,9 @@
 
     if ($env:CCUNIFIED_NO_SETUP -ne '1') {
         Write-Host ''
+        # With an enrollment key, setup reads CCUNIFIED_URL, CCUNIFIED_ENROLL_KEY
+        # and the rest itself, and asks nothing.
         & (Join-Path $dir 'ccunified.exe') setup
+        if ($enroll -and $LASTEXITCODE -ne 0) { throw "ccunified setup failed (exit code $LASTEXITCODE)" }
     }
 }

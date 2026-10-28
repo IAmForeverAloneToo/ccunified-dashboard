@@ -160,6 +160,39 @@ func (c *Client) PairStart(ctx context.Context, req PairStartRequest) (*PairStar
 	return &out, nil
 }
 
+// EnrollRequest asks to join with an enrollment key (no code to show).
+type EnrollRequest struct {
+	EnrollKey           string `json:"enroll_key"`
+	MachineName         string `json:"machine_name"`
+	OS                  string `json:"os"`
+	Arch                string `json:"arch"`
+	AgentVersion        string `json:"agent_version"`
+	SyncIntervalMinutes int    `json:"sync_interval_minutes"`
+}
+
+// Enrolled is the dashboard's answer: the name the machine will have (with
+// a number if another machine has it) and a secret to poll with.
+type Enrolled struct {
+	DeviceCode  string `json:"device_code"`
+	MachineName string `json:"machine_name"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+// Enroll asks to join with an enrollment key. Dashboards before ccunified
+// 0.7 answer 404.
+func (c *Client) Enroll(ctx context.Context, req EnrollRequest) (*Enrolled, error) {
+	var out Enrolled
+	if err := c.do(ctx, "/agent/enroll", req, false, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CheckEnrollKey asks whether an enrollment key works, without using it.
+func (c *Client) CheckEnrollKey(ctx context.Context, key string) error {
+	return c.do(ctx, "/agent/enroll/check", map[string]string{"enroll_key": key}, false, nil)
+}
+
 // PairPoll is the state of a join request; Token is set once, when approved.
 type PairPoll struct {
 	Status  string `json:"status"`

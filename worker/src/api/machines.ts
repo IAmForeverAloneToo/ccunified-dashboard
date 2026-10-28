@@ -106,6 +106,37 @@ export async function nameTaken(db: D1Database, name: string, exceptId?: string)
 }
 
 /**
+ * The names in use: active machines, and machines waiting to join (lower
+ * case), leaving out the waiting requests in `exceptRequests`.
+ */
+export async function takenNames(
+  db: D1Database,
+  exceptRequests: string[] = [],
+): Promise<Set<string>> {
+  const rows = await db
+    .prepare(
+      `SELECT name FROM machines WHERE revoked_at IS NULL
+       UNION ALL
+       SELECT machine_name FROM pairing_requests
+        WHERE status IN ('pending', 'approved') AND expires_at > ?1
+          AND id NOT IN (SELECT value FROM json_each(?2))`,
+    )
+    .bind(Date.now(), JSON.stringify(exceptRequests))
+    .raw<[string]>();
+  return new Set(rows.map(([n]) => n.toLowerCase()));
+}
+
+/** `name`, or the first of "name-2", "name-3"… that isn't taken (and fits in 64 characters). */
+export function freeName(name: string, taken: Set<string>): string {
+  if (!taken.has(name.toLowerCase())) return name;
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`;
+    const candidate = `${name.slice(0, 64 - suffix.length).trimEnd()}${suffix}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+/**
  * Loads a machine the user manages: admins any, managers those in their
  * departments. A machine the user can't see is "not found"; one they see
  * but don't manage is "forbidden".

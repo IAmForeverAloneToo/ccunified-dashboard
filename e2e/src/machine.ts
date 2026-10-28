@@ -30,6 +30,8 @@ export class Machine {
     private readonly exe: string,
     readonly claudeDir: string,
     private readonly network: Network,
+    /** More variables, such as a system-wide install's folders. */
+    private readonly extraEnv: NodeJS.ProcessEnv = {},
   ) {
     this.home = join(root, name, "home");
     this.configDir = join(root, name, "ccunified");
@@ -53,6 +55,7 @@ export class Machine {
       CCUNIFIED_DOH_URL: this.network.publicDns,
       CCUNIFIED_MODELSDEV_URL: this.network.modelsDevUrl,
       CCUNIFIED_LITELLM_URL: this.network.liteLLMUrl,
+      ...this.extraEnv,
     };
   }
 

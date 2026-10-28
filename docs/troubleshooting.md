@@ -101,6 +101,25 @@ stale requests on the Approvals page, or wait a few minutes.
 among active machines. Enter a different name on the Approvals page, or revoke
 the old machine first.
 
+**With an enrollment key:**
+
+- **"the dashboard doesn't know this enrollment key"**: it was mistyped or cut
+  short; copy it again from where you saved it (the dashboard shows it only
+  once; create a new one if it's lost).
+- **"this enrollment key was revoked"**, **"has expired"** or **"has been used
+  for as many machines as it allows"**: create a new key on the Machines page.
+- **"this dashboard doesn't accept enrollment keys yet"**: update the dashboard
+  with `ccunified server update`.
+- **"too many wrong enrollment keys were tried from this network"**: wait 10
+  minutes.
+- **A machine doesn't appear on the Approvals page**: run `ccunified status`
+  on it (as root or an administrator, `ccunified status --all-users`). On a
+  computer set up for every account, an account asks to join only once it has
+  usage.
+- **Approved, but nothing uploaded yet**: the machine finds out at its next
+  sync, within its upload interval. Run `ccunified sync` on it (or
+  `ccunified sync --all-users`) to start right away.
+
 ## Uploads
 
 **"No usage found on this machine yet"**: nothing to upload until Claude Code

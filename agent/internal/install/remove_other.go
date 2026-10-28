@@ -14,3 +14,5 @@ func RemoveProgram(dir string) error {
 	}
 	return os.RemoveAll(dir)
 }
+
+func removeDir(dir string) error { return os.RemoveAll(dir) }

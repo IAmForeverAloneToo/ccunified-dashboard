@@ -111,17 +111,26 @@ export function segmented<T extends string>(
 }
 
 /** Opens a modal dialog; resolves with the button value or form data on close. */
+let dialogCount = 0;
+
 export function openDialog(
   build: (close: (value?: string) => void) => Child,
+  opts: { wide?: boolean } = {},
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
-    const dialog = h("dialog");
+    const dialog = h("dialog", { class: opts.wide ? "wide" : undefined });
     let result: string | undefined;
     const close = (value?: string) => {
       result = value;
       dialog.close();
     };
     dialog.append(h("div", { class: "dialog-body" }, build(close)));
+    // Named by its heading, for screen readers.
+    const title = dialog.querySelector("h2");
+    if (title) {
+      title.id ||= `dialog-title-${++dialogCount}`;
+      dialog.setAttribute("aria-labelledby", title.id);
+    }
     dialog.addEventListener("close", () => {
       dialog.remove();
       resolve(result);
@@ -153,4 +162,29 @@ export async function confirmDialog(opts: {
     ),
   ]);
   return answer === "yes";
+}
+
+/** A button that copies text to the clipboard. */
+export function copyButton(text: string): HTMLButtonElement {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "small",
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          toast("Copied");
+        } catch {
+          toast("Couldn't copy. Select the text and copy it yourself.");
+        }
+      },
+    },
+    "Copy",
+  );
+}
+
+/** A command to run, with a Copy button. */
+export function command(text: string): HTMLElement {
+  return h("div", { class: "command" }, h("pre", null, h("code", null, text)), copyButton(text));
 }

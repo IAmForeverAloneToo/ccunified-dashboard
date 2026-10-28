@@ -68,5 +68,5 @@ func (s *Scheduler) Current(ctx context.Context) Status {
 // UsesSystemd reports whether Install would use a systemd user timer (and
 // so whether lingering matters).
 func (s *Scheduler) UsesSystemd(ctx context.Context) bool {
-	return runtime.GOOS == "linux" && s.systemdAvailable(ctx)
+	return runtime.GOOS == "linux" && !s.System && s.systemdAvailable(ctx)
 }

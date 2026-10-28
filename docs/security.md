@@ -78,6 +78,26 @@ at your own subdomain.
 - At most 20 requests can wait at once, and each network can start 5 every 10
   minutes.
 
+## Enrollment keys
+
+- **An enrollment key only lets machines ask to join.** Nothing they send
+  is stored, and they get no upload key, until an admin (or a manager of the
+  key's department) approves each of them on the Approvals page. Requests
+  expire after 30 days.
+- A key is **256 random bits**, shown once when it's created. The dashboard
+  stores only a SHA-256 hash of it. It can **expire** and be limited to a
+  number of machines, and **revoking** it stops it at once and denies the
+  machines still waiting with it.
+- **Wrong keys are slowed down:** after 10 from one network in 10 minutes,
+  that network has to wait. At most 5,000 machines can wait at once.
+- Managers create keys only for the departments they manage, and approve only
+  those departments' machines.
+- **On a computer set up for every account**, the key and each account's
+  upload key are in a folder only administrators can read (`/var/lib/ccunified`
+  or `%ProgramData%\ccunified`). On Linux, ccusage runs as each account, with
+  that account's rights and none of root's, so it reads only that account's
+  files. Each account's usage goes to its own machine on the dashboard.
+
 ## Passwords
 
 - **Passwords never leave your browser.** The browser stretches the password

@@ -30,7 +30,7 @@ Engineering or Design):
 
 - **Manager:** sees the department's machines; approves machines into it;
   renames, moves (between departments they manage), revokes and removes them; picks
-  their owners; and adds and manages its people (see [Users](#users)).
+  their owners; creates enrollment keys for adding many of them; and adds and manages its people (see [Users](#users)).
 - **Viewer:** sees the department's machines.
 - **Member:** can own machines in the department, and sees only the ones they
   own.
@@ -49,7 +49,7 @@ those.
 |---|---|---|---|---|---|
 | See their own machines | ✓ | ✓ | ✓ | ✓ | ✓ |
 | See a department's machines | | ✓ | ✓ | ✓ (all) | ✓ (all) |
-| Approve, rename, move, revoke and remove machines; pick owners | | | ✓ (their departments) | | ✓ |
+| Approve, rename, move, revoke and remove machines; pick owners; create enrollment keys | | | ✓ (their departments) | | ✓ |
 | Add and manage users | | | ✓ (see [Users](#users)) | | ✓ |
 | Manage departments and settings | | | | | ✓ |
 | Change their own password and two-factor login | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -193,12 +193,24 @@ without a department any owner. The *Add a machine* card shows the install
 commands and your dashboard's address. Machine statuses and removing machines
 are explained in [Add machines](adding-machines.md#machine-status).
 
+Admins and managers also see **Add many machines**: the enrollment keys they
+manage, with how many machines each added, how many wait for approval, when it
+stops working and when it was last used, and a button to **Revoke** it.
+**Create an enrollment key** to add machines from a script; see
+[Add many machines](adding-machines.md#add-many-machines-with-a-script).
+
 ## Approvals (admins and managers)
 
 Type the code a new machine shows, pick its **Department** and **Owner**, and
 **Approve** or **Deny** it; see [Add machines](adding-machines.md#join-a-machine).
 Managers approve machines into a department they manage; admins may leave the
-department out. Only admins see the list of machines waiting to join.
+department out. Only admins see the list of machines waiting with a code.
+
+Machines that joined with an enrollment key are listed under **Joined with an
+enrollment key**, with the department and owner they get from the key. Tick
+some (or tick the header to pick them all) and **Approve** or **Deny** them
+together. Managers see those of the departments they manage. The badge on
+**Approvals** counts every machine waiting that you can approve.
 
 ## Departments (admins)
 

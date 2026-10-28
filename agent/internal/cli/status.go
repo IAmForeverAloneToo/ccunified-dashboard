@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,7 +20,7 @@ func init() {
 	register(&Command{
 		Name:    "status",
 		Summary: "Show this machine's dashboard, last upload and schedule",
-		Usage:   "ccunified status",
+		Usage:   "ccunified status [--all-users]",
 		Run:     runStatus,
 	})
 	register(&Command{
@@ -71,15 +73,42 @@ func toolList(ids []string) string {
 	return strings.Join(names, ", ")
 }
 
-func runStatus(_ context.Context, env *Env, args []string) error {
-	if len(args) > 0 {
+func runStatus(ctx context.Context, env *Env, args []string) error {
+	fs := newFlags("status", env)
+	allUsers := fs.Bool("all-users", false, "show every account of a system-wide install")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
 		return &UsageError{Msg: "unexpected arguments"}
 	}
 	dir, _ := config.Dir()
 	logPath, _ := config.LogPath()
 	env.Printf("ccunified %s\n\n", version.Version)
 	cfg, err := config.Load()
+	if sys, sysErr := config.LoadSystem(); sysErr == nil && (*allUsers || errors.Is(err, config.ErrNotConfigured)) {
+		return statusAllUsers(ctx, env, sys)
+	} else if *allUsers {
+		return sysErr
+	}
 	if errors.Is(err, config.ErrNotConfigured) {
+		if pend, err := config.LoadPending(); err == nil {
+			row := func(label, value string) { env.Printf("  %-13s %s\n", label+":", value) }
+			row("Dashboard", pend.DashboardURL)
+			row("Machine", pend.MachineName)
+			switch pend.Status {
+			case "waiting":
+				row("Status", fmt.Sprintf("waiting for approval on the dashboard's Approvals page (asked %s)", ago(pend.RequestedAt, time.Now())))
+			case "denied":
+				row("Status", "the request to join was denied; to ask again, run ccunified setup with an enrollment key")
+			default:
+				row("Status", "the request to join expired; to ask again, run ccunified setup with an enrollment key")
+			}
+			row("Schedule", ScheduleStatus())
+			row("Settings", dir)
+			row("Log", logPath)
+			return nil
+		}
 		env.Printf("This machine isn't connected to a dashboard yet. Run: ccunified setup\n")
 		return nil
 	}
@@ -127,5 +156,43 @@ func runStatus(_ context.Context, env *Env, args []string) error {
 	row("ccusage", fmt.Sprintf("%s, %s", ccusage.Version(), integrity))
 	row("Settings", dir)
 	row("Log", logPath)
+	return nil
+}
+
+// statusAllUsers shows a system-wide install: its dashboard, schedule, and
+// where each account stands.
+func statusAllUsers(ctx context.Context, env *Env, sys *config.System) error {
+	now := time.Now()
+	row := func(label, value string) { env.Printf("  %-13s %s\n", label+":", value) }
+	row("Dashboard", sys.DashboardURL)
+	row("Installed for", "every user account on this computer")
+	row("Sync every", fmt.Sprintf("%d minutes", sys.SyncIntervalMinutes))
+	row("Schedule", schedulerForAll().Current(ctx).String())
+	row("Settings", config.SystemDir())
+	env.Printf("\nAccounts:\n")
+	entries, _ := os.ReadDir(filepath.Join(config.SystemDir(), "users"))
+	if len(entries) == 0 {
+		env.Printf("  None has usage yet.\n")
+	}
+	for _, e := range entries {
+		dir := filepath.Join(config.SystemDir(), "users", e.Name())
+		if cfg, err := config.LoadIn(dir); err == nil {
+			st := config.LoadStateIn(dir)
+			line := fmt.Sprintf("%q, last upload %s", cfg.MachineName, ago(st.LastSuccessAt, now))
+			if st.LastError != "" && st.LastAttemptAt.After(st.LastSuccessAt) {
+				line += "; last problem: " + st.LastError
+			}
+			row(e.Name(), line)
+		} else if pend, err := config.LoadPendingIn(dir); err == nil {
+			switch pend.Status {
+			case "waiting":
+				row(e.Name(), fmt.Sprintf("%q, waiting for approval (asked %s)", pend.MachineName, ago(pend.RequestedAt, now)))
+			default:
+				row(e.Name(), fmt.Sprintf("%q, request to join %s", pend.MachineName, pend.Status))
+			}
+		} else {
+			row(e.Name(), "no usage yet")
+		}
+	}
 	return nil
 }

@@ -78,6 +78,28 @@ Joining uses a device-code flow, like signing in to a TV app:
    every 5 seconds. The first poll after approval creates the machine and
    returns its upload key, exactly once.
 
+With an **enrollment key** (`ccunified setup --enroll-key`), there's no code
+to show and nobody waits at the machine:
+
+1. The machine calls `POST /agent/enroll` with the key, its name, system and
+   interval. The request takes the key's department and owner, and its name
+   gets a number if another machine (or another waiting one) has it. It
+   returns a device code, which the machine saves in `pending.json`.
+2. An admin, or a manager of the key's department, approves it on the
+   Approvals page (`POST /api/pairing/decide`, many at once). Requests wait up
+   to 30 days.
+3. Each sync on the machine polls once (`POST /agent/pair/poll`). The first
+   after approval saves the upload key, and the sync goes on to upload the
+   whole history.
+
+Set up for every account on a computer (as root or SYSTEM), setup checks the
+key (`POST /agent/enroll/check`, which doesn't use it up) and installs one
+background sync for the computer: `ccunified sync --all-users`. That lists
+the people's accounts and runs one `ccunified sync` per account, with the
+account's own settings folder and its home folders in the environment so that
+ccusage reads that account's logs (on Linux, as that account). An account
+with usage and no settings yet enrolls as `HOST (account)`.
+
 ## Syncing
 
 The background sync runs `ccunified sync --quiet` on schedule:
@@ -167,6 +189,9 @@ learns of a release as soon as a machine uploads while running it.
   so runs missed while the machine was off happen at the next boot. Setup
   offers to turn on *lingering* so it also runs while you're logged out.
   Without systemd, a crontab line marked `# ccunified-sync` is used instead.
+- **For every account:** the Task Scheduler task `ccunified sync (all users)`,
+  running as SYSTEM every N minutes and at startup; on Linux, a systemd timer
+  of the system (not a user's), or `/etc/cron.d/ccunified`, running as root.
 
 ## The Worker's API
 
@@ -176,6 +201,8 @@ learns of a release as soon as a machine uploads while running it.
 |---|---|
 | `POST /agent/pair/start` | Ask to join; returns the user code and device code |
 | `POST /agent/pair/poll` | Wait for approval; returns the upload key once |
+| `POST /agent/enroll` | Ask to join with an enrollment key; returns the machine's name and a device code |
+| `POST /agent/enroll/check` | Check that an enrollment key works, without using it |
 | `POST /agent/ingest` | Upload usage |
 | `POST /agent/prices` | Send models' prices from the public price lists; answers with the models the dashboard has seen |
 
@@ -193,8 +220,10 @@ learns of a release as soon as a machine uploads while running it.
 | `DELETE /api/machines/:id?usage=keep` or `?usage=delete` | Remove a revoked machine, keeping its usage in the totals or deleting it | admin; manager of its department |
 | `GET /api/departments` | Departments with their numbers of machines and people (all, or those the user has a role or a machine in) | any user |
 | `POST /api/departments`, `PATCH/DELETE /api/departments/:id` | Add, rename, delete departments | admin |
-| `GET /api/pairing` | Machines waiting to join | admin |
+| `GET /api/pairing` | Machines waiting to join | admin; manager (those enrolled into their departments) |
 | `POST /api/pairing/approve`, `POST /api/pairing/deny` | Approve (with a department and owner) or deny a code | admin; manager, into their departments |
+| `POST /api/pairing/decide` | Approve or deny machines that enrolled with a key, many at once | admin; manager of their departments |
+| `GET /api/enrollment-keys`, `POST /api/enrollment-keys`, `DELETE /api/enrollment-keys/:id` | List, create (shown once) and revoke enrollment keys | admin; manager, for their departments |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` | Manage users and their roles | admin; manager, for the plain users of their departments |
 | `GET /api/settings` / `PATCH /api/settings` | Read the settings and update status / change the time zone | admin or viewer / admin |
 | `POST /api/settings/check-updates` | Ask GitHub for the newest release now | admin or viewer |
@@ -219,7 +248,8 @@ without a login. Every other path serves the dashboard's pages.
 | `sessions` | Login sessions, as hashes of their tokens |
 | `login_attempts` | Failed-login counters for rate limiting |
 | `machines` | Name, system, versions, interval, hash of the upload key, last upload, revoked time, removed time (when it was removed and its usage kept), the tools it has reported, department and owner |
-| `pairing_requests` | Machines waiting to join, and the outcome of each request (with the department and owner picked when approving) |
+| `pairing_requests` | Machines waiting to join, and the outcome of each request (with the department and owner picked when approving, and the enrollment key it came with) |
+| `enrollment_keys` | Name, hash of the key, department and owner it gives, who made it, when it expires, how many machines it may add and has added, when it was last used and revoked |
 | `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost (ccusage's) |
 | `model_prices` | Each model's price per million tokens from models.dev, LiteLLM and the admins (`custom`), with the list entry it came from |
 

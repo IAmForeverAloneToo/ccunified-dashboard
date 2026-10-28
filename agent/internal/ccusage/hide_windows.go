@@ -14,3 +14,6 @@ const createNoWindow = 0x08000000
 func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 }
+
+// runAs does nothing on Windows: SYSTEM reads each account's files itself.
+func runAs(*exec.Cmd, *Account) {}

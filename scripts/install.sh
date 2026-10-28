@@ -3,6 +3,15 @@
 #
 #   curl -fsSL https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.sh | sh
 #
+# To add many machines from a script, with an enrollment key from the
+# dashboard's Machines page (no questions asked; an admin approves them):
+#
+#   curl -fsSL …/install.sh | CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_… sh
+#
+# Run as root, that sets up every user account on the computer (each with
+# usage is its own machine on the dashboard), with the program in
+# /opt/ccunified. Optional: CCUNIFIED_NAME, CCUNIFIED_INTERVAL (15, 30, 60).
+#
 # Environment overrides (testing, forks):
 #   CCUNIFIED_REPO           owner/name of the GitHub repository
 #   CCUNIFIED_DOWNLOAD_BASE  where the release files are (default: the latest GitHub release)
@@ -28,8 +37,18 @@ aarch64 | arm64) arch=arm64 ;;
 esac
 
 asset="ccunified_${os}_${arch}.tar.gz"
-dir="${XDG_DATA_HOME:-$HOME/.local/share}/ccunified"
-bindir="$HOME/.local/bin"
+enroll="${CCUNIFIED_ENROLL_KEY:-}"
+if [ -n "$enroll" ] && [ "$(id -u)" = 0 ]; then
+	# For every account: somewhere they can all run it.
+	dir="/opt/ccunified"
+	bindir="/usr/local/bin"
+else
+	dir="${XDG_DATA_HOME:-$HOME/.local/share}/ccunified"
+	bindir="$HOME/.local/bin"
+fi
+if [ "${CCUNIFIED_ALL_USERS:-}" = 1 ] && [ "$(id -u)" != 0 ]; then
+	fail "installing for all users needs root; run it with sudo"
+fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
@@ -79,7 +98,10 @@ esac
 
 if [ "${CCUNIFIED_NO_SETUP:-}" != "1" ]; then
 	echo
-	if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+	if [ -n "$enroll" ]; then
+		# setup reads CCUNIFIED_URL, CCUNIFIED_ENROLL_KEY and the rest itself.
+		"$dir/ccunified" setup
+	elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
 		"$dir/ccunified" setup </dev/tty
 	else
 		echo "Now run: $dir/ccunified setup"

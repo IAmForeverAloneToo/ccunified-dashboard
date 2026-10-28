@@ -302,11 +302,20 @@ describe("approving machines", () => {
   const approve = (who: Person, body: Record<string, unknown>) =>
     send("POST", "/api/pairing/approve", x.people[who], body);
 
-  test("only admins see the waiting list", async () => {
-    expect((await get("/api/pairing", x.people.admin)).status).toBe(200);
-    for (const who of ["managerA", "viewer", "memberA"] as Person[]) {
+  test("admins see every machine waiting; managers only those enrolled into their departments", async () => {
+    const req = await waiting(`listed-${x.tag}`);
+    const names = async (who: Person) =>
+      (
+        (await (await get("/api/pairing", x.people[who])).json()) as {
+          requests: { machine_name: string }[];
+        }
+      ).requests.map((r) => r.machine_name);
+    expect(await names("admin")).toContain(`listed-${x.tag}`);
+    expect(await names("managerA")).not.toContain(`listed-${x.tag}`);
+    for (const who of ["viewer", "memberA"] as Person[]) {
       expect((await get("/api/pairing", x.people[who])).status).toBe(403);
     }
+    await send("POST", "/api/pairing/deny", x.people.admin, { user_code: req.user_code });
   });
 
   test("managers approve into their departments, with an owner from there", async () => {

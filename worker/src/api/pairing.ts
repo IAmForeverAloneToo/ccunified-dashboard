@@ -1,22 +1,132 @@
 import type { Context } from "hono";
 import { z } from "zod";
 import { normalizeUserCode } from "../agent/pair";
-import { checkDepartment, checkOwner, isAdmin, manages, managesSomething } from "../auth/access";
+import {
+  checkDepartment,
+  checkOwner,
+  departmentsWith,
+  isAdmin,
+  manages,
+  managesSomething,
+} from "../auth/access";
 import type { AppEnv } from "../env";
 import { fail, readJson } from "../lib/http";
-import { MachineName, nameTaken } from "./machines";
+import { freeName, MachineName, nameTaken, takenNames } from "./machines";
 
-/** GET /api/pairing (admin) — machines currently waiting to join. */
+/**
+ * GET /api/pairing (admins, managers) — machines currently waiting to join.
+ * Admins see them all; managers see the machines that enrolled with a key of
+ * a department they manage. Machines that enrolled with a key have `key`
+ * (and are approved from this list); the others show a code on their screen.
+ */
 export async function listPairing(c: Context<AppEnv>): Promise<Response> {
+  const u = c.get("user");
+  if (!managesSomething(u)) fail(403, "forbidden");
   const { results } = await c.env.DB.prepare(
-    `SELECT id, user_code, machine_name, os, arch, agent_version, client_ip, created_at, expires_at
-       FROM pairing_requests
-      WHERE status = 'pending' AND expires_at > ?1
-      ORDER BY created_at DESC`,
+    `SELECT p.id, p.machine_name, p.os, p.arch, p.agent_version, p.client_ip, p.created_at,
+            p.expires_at, p.department_id, d.name AS department_name, p.owner_id,
+            o.username AS owner_username, p.enrollment_key_id, k.name AS key_name
+       FROM pairing_requests p
+       LEFT JOIN departments d ON d.id = p.department_id
+       LEFT JOIN users o ON o.id = p.owner_id
+       LEFT JOIN enrollment_keys k ON k.id = p.enrollment_key_id
+      WHERE p.status = 'pending' AND p.expires_at > ?1
+        AND (?2 = 1 OR (p.enrollment_key_id IS NOT NULL
+                        AND p.department_id IN (SELECT value FROM json_each(?3))))
+      ORDER BY p.created_at DESC
+      LIMIT 2000`,
   )
-    .bind(Date.now())
-    .all();
-  return c.json({ requests: results });
+    .bind(Date.now(), isAdmin(u) ? 1 : 0, JSON.stringify(departmentsWith(u, "manager")))
+    .all<{
+      department_id: string | null;
+      department_name: string | null;
+      owner_id: string | null;
+      owner_username: string | null;
+      enrollment_key_id: string | null;
+      key_name: string | null;
+    }>();
+  return c.json({
+    requests: results.map(
+      ({
+        department_id,
+        department_name,
+        owner_id,
+        owner_username,
+        enrollment_key_id,
+        key_name,
+        ...r
+      }) => ({
+        ...r,
+        department: department_id ? { id: department_id, name: department_name } : null,
+        owner: owner_id ? { id: owner_id, username: owner_username } : null,
+        key: enrollment_key_id ? { id: enrollment_key_id, name: key_name } : null,
+      }),
+    ),
+  });
+}
+
+/**
+ * POST /api/pairing/decide (admins, managers) — `{ ids, approve }`: approves
+ * or denies machines that enrolled with a key, into the key's department and
+ * with its owner. Managers decide for the departments they manage. A name
+ * another machine has gets a number ("LAPTOP-2").
+ */
+export async function decidePairing(c: Context<AppEnv>): Promise<Response> {
+  const u = c.get("user");
+  if (!managesSomething(u)) fail(403, "forbidden");
+  const body = await readJson(
+    c,
+    z.strictObject({ ids: z.array(z.string().max(64)).min(1).max(500), approve: z.boolean() }),
+  );
+  const db = c.env.DB;
+  const now = Date.now();
+  const { results } = await db
+    .prepare(
+      `SELECT id, machine_name, department_id FROM pairing_requests
+        WHERE id IN (SELECT value FROM json_each(?1)) AND status = 'pending'
+          AND expires_at > ?2 AND enrollment_key_id IS NOT NULL`,
+    )
+    .bind(JSON.stringify([...new Set(body.ids)]), now)
+    .all<{ id: string; machine_name: string; department_id: string | null }>();
+  const mine = results.filter((r) => manages(u, r.department_id));
+  if (mine.length === 0) fail(404, "not_found");
+
+  const names: Record<string, string> = {};
+  const updates: D1PreparedStatement[] = [];
+  if (body.approve) {
+    // Each name is free among active machines and the other waiting ones.
+    const taken = await takenNames(
+      db,
+      mine.map((r) => r.id),
+    );
+    for (const r of mine) {
+      const name = freeName(r.machine_name, taken);
+      taken.add(name.toLowerCase());
+      names[r.id] = name;
+      updates.push(
+        db
+          .prepare(
+            `UPDATE pairing_requests
+                SET status = 'approved', machine_name = ?1, decided_by = ?2, decided_at = ?3
+              WHERE id = ?4 AND status = 'pending'`,
+          )
+          .bind(name, u.id, now, r.id),
+      );
+    }
+  } else {
+    for (const r of mine) {
+      updates.push(
+        db
+          .prepare(
+            `UPDATE pairing_requests SET status = 'denied', decided_by = ?1, decided_at = ?2
+              WHERE id = ?3 AND status = 'pending'`,
+          )
+          .bind(u.id, now, r.id),
+      );
+    }
+  }
+  await db.batch(updates);
+  return c.json({ ok: true, decided: mine.length, names });
 }
 
 async function findPending(c: Context<AppEnv>, code: string) {

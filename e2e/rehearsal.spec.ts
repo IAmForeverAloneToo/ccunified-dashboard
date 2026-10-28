@@ -10,10 +10,19 @@
  * are deleted at the end; only daily totals ever reach the dashboard.
  */
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Page, test } from "@playwright/test";
 import { modelFamily } from "../dashboard/src/lib/models";
@@ -79,6 +88,8 @@ let machines: [Machine, Machine];
 let expected: [ReturnType<typeof ccusageTotals>, ReturnType<typeof ccusageTotals>];
 let ccusagePath: string;
 let priceLists: Server | undefined;
+let exePath: string;
+let network: ConstructorParameters<typeof Machine>[4];
 /**
  * The price lists the machines download: Claude models on models.dev (as
  * Anthropic's entries) and GPT models on LiteLLM, each at its own made-up
@@ -105,6 +116,7 @@ test.beforeAll(async () => {
   const bin = join(root, "bin");
   mkdirSync(bin);
   const exe = join(bin, "ccunified");
+  exePath = exe;
   execFileSync(
     "go",
     [
@@ -180,7 +192,7 @@ test.beforeAll(async () => {
   const pricesPort = await new Promise<number>((resolve) =>
     lists.listen(0, "127.0.0.1", () => resolve((lists.address() as AddressInfo).port)),
   );
-  const network = {
+  network = {
     cloudflareApi: cf.apiUrl,
     proxy: cf.proxyUrl,
     certFile: cf.certFile,
@@ -451,7 +463,7 @@ test("a second machine joins with a code approved in the dashboard", async () =>
     .getByLabel("Code shown on the machine")
     .fill((code as string).replace("-", "").toLowerCase());
   await expect(page.getByLabel("Code shown on the machine")).toHaveValue(code as string);
-  await page.getByRole("button", { name: "Approve" }).click();
+  await page.locator("form").getByRole("button", { name: "Approve" }).click();
   await expect(page.getByText(`Approved ${m2.name}.`)).toBeVisible();
 
   await s.expect(`Approved! This machine is "${m2.name}" on the dashboard.`, 60_000);
@@ -743,4 +755,188 @@ test("with the price lists, costs are each model's tokens at its listed price", 
   expect(await setMode("ccusage")).toBe(200);
   await page.reload();
   await expect(cost).toHaveText(money(add(expected[0].total, expected[1].total).cost_usd));
+});
+
+// ---------- Adding many machines with an enrollment key ----------
+
+/** Creates an enrollment key as the logged-in admin. */
+async function newEnrollKey(name: string): Promise<string> {
+  const res = await page.evaluate(async (n) => {
+    const r = await fetch("/api/enrollment-keys", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: n,
+        department_id: null,
+        owner_id: null,
+        expires_in_days: 1,
+        max_uses: null,
+      }),
+    });
+    return { status: r.status, body: await r.json() };
+  }, name);
+  expect(res.status).toBe(201);
+  return res.body.key as string;
+}
+
+/** Approves the named machines on the Approvals page, all at once. */
+async function approveEnrolled(names: string[]) {
+  await page.goto(`${DASHBOARD}/approve`);
+  const list = page
+    .locator("section.card")
+    .filter({ has: page.getByRole("heading", { name: "Joined with an enrollment key" }) });
+  for (const name of names) await list.getByRole("checkbox", { name: `Select ${name}` }).check();
+  await list.getByRole("button", { name: `Approve ${names.length}` }).click();
+  await expect(page.getByText(`Approved ${names.length} machine`)).toBeVisible();
+}
+
+test("a script adds a machine with an enrollment key; it uploads once approved", async () => {
+  const more = prepareLogs(join(root, "enrolled"), ["kiosk", "unused"]);
+  const kiosk = new Machine(
+    "kiosk",
+    join(root, "enrolled"),
+    exePath,
+    more.machines[0].claudeDir,
+    network,
+  );
+  const want = ccusageTotals(ccusagePath, more.machines[0], TIMEZONE);
+  const key = await newEnrollKey("Kiosks");
+  const setup = () =>
+    kiosk.run(
+      "setup",
+      "--url",
+      HOST,
+      "--enroll-key",
+      key,
+      "--name",
+      "kiosk",
+      "--this-user", // the rehearsal may run as root
+      "--no-schedule",
+    );
+
+  let r = await setup();
+  expect(r.output).toContain(`Asked ${DASHBOARD} to add this machine as "kiosk".`);
+  expect(r.code).toBe(0);
+  r = await kiosk.run("status");
+  expect(r.output).toMatch(/Status:\s+waiting for approval/);
+  r = await kiosk.run("sync");
+  expect(r.output).toContain(`Waiting for approval on ${DASHBOARD} as "kiosk".`);
+  expect(r.code).toBe(0);
+  // Running the script again changes nothing.
+  r = await setup();
+  expect(r.output).toContain("is waiting for approval");
+
+  await approveEnrolled(["kiosk"]);
+  r = await kiosk.run("sync");
+  expect(r.code).toBe(0);
+  expect(r.output).toMatch(/Uploaded the full history/);
+  const totals = await dashboardTotals();
+  if (allTokens(want.total) > 0) expectSameTotals(totals.machines.kiosk, want.total);
+  r = await setup();
+  expect(r.output).toContain(`This machine already uploads to ${DASHBOARD} as "kiosk".`);
+  expect(r.code).toBe(0);
+});
+
+test("a script run as root sets up every account on a computer, each as its own machine", async () => {
+  test.skip(process.getuid?.() !== 0, "needs root, to add accounts and run as them");
+  const tag = `ccu${Date.now() % 100_000}`;
+  const [alice, bob, carol, dave] = ["a", "b", "c", "d"].map((x) => `${tag}${x}`) as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  const accounts = join(root, "accounts");
+  // Every account must reach the program and its own home.
+  chmodSync(root, 0o755);
+  const logsOf = prepareLogs(accounts, [alice, bob]);
+  chmodSync(accounts, 0o755);
+  const homeOf = (name: string) => join(accounts, name, "home");
+  for (const name of [carol, dave]) mkdirSync(homeOf(name), { recursive: true });
+  // Claude Code's logs where it keeps them by default.
+  logsOf.machines.forEach((m) => {
+    renameSync(m.claudeDir, join(m.home, ".claude"));
+    m.claudeDir = join(m.home, ".claude");
+  });
+  // dave set ccunified up himself: left alone.
+  mkdirSync(join(homeOf(dave), ".config", "ccunified"), { recursive: true });
+  writeFileSync(join(homeOf(dave), ".config", "ccunified", "config.json"), "{}");
+  const created: string[] = [];
+  try {
+    for (const name of [alice, bob, carol, dave]) {
+      execFileSync("useradd", ["-M", "-d", homeOf(name), "-s", "/bin/sh", name]);
+      created.push(name);
+      chmodSync(join(accounts, name), 0o755);
+      execFileSync("chown", ["-R", `${name}:${name}`, homeOf(name)]);
+    }
+    const want = logsOf.machines.map((m) => ccusageTotals(ccusagePath, m, TIMEZONE));
+    const machineName = (user: string) => `${hostname()} (${user})`;
+
+    const computer = new Machine(
+      "computer",
+      join(root, "computer"),
+      exePath,
+      "/nonexistent",
+      network,
+      {
+        CCUNIFIED_SYSTEM_HOME: join(root, "computer", "system"),
+        CCUNIFIED_SYSTEM_PROGRAM_DIR: join(root, "computer", "program"),
+      },
+    );
+    chmodSync(join(root, "computer"), 0o755);
+    const key = await newEnrollKey("Every account");
+    let r = await computer.run(
+      "setup",
+      "--url",
+      HOST,
+      "--enroll-key",
+      key,
+      "--all-users",
+      "--no-schedule",
+    );
+    expect(r.code, r.output).toBe(0);
+    expect(r.output).toContain("✓ Installed the program in");
+    for (const user of [alice, bob]) {
+      expect(r.output).toContain(
+        `${user}: Waiting for approval on ${DASHBOARD} as "${machineName(user)}".`,
+      );
+    }
+    expect(r.output).toContain(`${carol}: No usage on this account yet`);
+    expect(r.output).toContain(`${dave}: set up by the account itself; skipped`);
+
+    await approveEnrolled([machineName(alice), machineName(bob)]);
+    r = await computer.run("sync", "--all-users");
+    expect(r.code, r.output).toBe(0);
+    expect(r.output).toMatch(new RegExp(`${alice}: Uploaded the full history`));
+
+    const totals = await dashboardTotals();
+    [alice, bob].forEach((user, i) => {
+      const w = want[i];
+      if (w && allTokens(w.total) > 0)
+        expectSameTotals(totals.machines[machineName(user)], w.total);
+    });
+    expect(Object.keys(totals.machines).some((n) => n.includes(carol))).toBe(false);
+    // ccusage ran as each account: nothing in their homes belongs to root.
+    for (const user of [alice, bob]) {
+      expect(
+        execFileSync("find", [homeOf(user), "-user", "root"])
+          .toString()
+          .trim(),
+      ).toBe("");
+    }
+
+    r = await computer.run("status", "--all-users");
+    expect(r.output).toMatch(
+      new RegExp(
+        `${alice}:\\s+"${machineName(alice).replace(/[()]/g, "\\$&")}", last upload just now`,
+      ),
+    );
+    r = await computer.run("uninstall", "--all-users", "--yes");
+    expect(r.code, r.output).toBe(0);
+    expect(r.output).toContain(machineName(alice));
+    expect(existsSync(join(root, "computer", "system"))).toBe(false);
+    expect(existsSync(join(root, "computer", "program"))).toBe(false);
+  } finally {
+    for (const name of created) execFileSync("userdel", [name]);
+  }
 });

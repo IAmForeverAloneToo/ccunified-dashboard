@@ -61,12 +61,14 @@ describe("pairing a new machine", () => {
     expect((await poll(started.device_code)).body).toEqual({ status: "pending" });
 
     const list = (await (await w.fetch("/api/pairing", { cookie: admin.cookie })).json()) as {
-      requests: { user_code: string; machine_name: string }[];
+      requests: { machine_name: string; key: unknown }[];
     };
     expect(list.requests).toContainEqual(
-      expect.objectContaining({ user_code: started.user_code, machine_name: "Workstation" }),
+      expect.objectContaining({ machine_name: "Workstation", key: null }),
     );
+    // Neither secret: the code is read off the machine's screen.
     expect(JSON.stringify(list)).not.toContain(started.device_code);
+    expect(JSON.stringify(list)).not.toContain(started.user_code);
 
     // Typed loosely by the admin.
     const res = await approve(started.user_code.toLowerCase().replace("-", " "));

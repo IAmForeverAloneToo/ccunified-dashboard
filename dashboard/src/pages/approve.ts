@@ -1,6 +1,6 @@
 import { isAdmin } from "../lib/access";
 import { ApiError, api, type Department, type PairingRequest, type User } from "../lib/api";
-import { h, toast } from "../lib/dom";
+import { fill, h, toast } from "../lib/dom";
 import { OS_LABEL, relativeTime } from "../lib/format";
 import type { PageContext } from "../main";
 
@@ -138,7 +138,7 @@ export async function approvePage(ctx: PageContext) {
       );
       form.reset();
       fillOwners();
-      if (admin) await loadPending();
+      await loadPending();
       ctx.refreshApprovals();
     } catch (e) {
       if (e instanceof ApiError && e.code === "not_found") {
@@ -167,8 +167,143 @@ export async function approvePage(ctx: PageContext) {
   });
   deny.addEventListener("click", () => void decide("deny"));
 
+  // Machines that enrolled with a key: approved from this list.
+  const enrolledCard = h("section", { class: "card stack", "aria-labelledby": "enrolled-title" });
+  const selected = new Set<string>();
+  let enrolled: PairingRequest[] = [];
+
+  async function decideMany(ids: string[], approve: boolean) {
+    if (ids.length === 0) return;
+    const res = await api<{ decided: number }>("/pairing/decide", {
+      method: "POST",
+      body: { ids, approve },
+    });
+    const n = res.decided;
+    toast(
+      approve
+        ? `Approved ${n} machine${n === 1 ? "" : "s"}. ${n === 1 ? "It starts" : "They start"} uploading at ${n === 1 ? "its" : "their"} next sync.`
+        : `Denied ${n} machine${n === 1 ? "" : "s"}`,
+    );
+    for (const id of ids) selected.delete(id);
+    await loadPending();
+    ctx.refreshApprovals();
+  }
+
+  function drawEnrolled() {
+    for (const id of [...selected]) if (!enrolled.some((r) => r.id === id)) selected.delete(id);
+    const count = selected.size;
+    const all = h("input", {
+      type: "checkbox",
+      "aria-label": "Select every machine",
+      checked: enrolled.length > 0 && count === enrolled.length,
+      onchange: () => {
+        if (all.checked) for (const r of enrolled) selected.add(r.id);
+        else selected.clear();
+        drawEnrolled();
+      },
+    });
+    all.indeterminate = count > 0 && count < enrolled.length;
+    const approveButton = h(
+      "button",
+      {
+        type: "button",
+        class: "primary",
+        disabled: count === 0,
+        onclick: () => void decideMany([...selected], true),
+      },
+      count > 0 ? `Approve ${count}` : "Approve",
+    );
+    const denyButton = h(
+      "button",
+      {
+        type: "button",
+        class: "danger",
+        disabled: count === 0,
+        onclick: () => void decideMany([...selected], false),
+      },
+      count > 0 ? `Deny ${count}` : "Deny",
+    );
+    fill(
+      enrolledCard,
+      h(
+        "div",
+        { class: "card-head" },
+        h(
+          "div",
+          null,
+          h("h2", { id: "enrolled-title" }, "Joined with an enrollment key"),
+          h(
+            "p",
+            null,
+            "These machines asked to join with one of your enrollment keys. Approve them to let them upload; each request waits up to 30 days.",
+          ),
+        ),
+      ),
+      enrolled.length === 0
+        ? h("p", { class: "muted" }, "No machines are waiting right now.")
+        : [
+            h("div", { class: "row" }, approveButton, denyButton),
+            h(
+              "div",
+              { class: "table-wrap" },
+              h(
+                "table",
+                null,
+                h(
+                  "thead",
+                  null,
+                  h(
+                    "tr",
+                    null,
+                    h("th", { scope: "col", class: "check" }, all),
+                    ["Name", "Department", "Owner", "Key", "System", "Asked"].map((t) =>
+                      h("th", { scope: "col" }, t),
+                    ),
+                  ),
+                ),
+                h(
+                  "tbody",
+                  null,
+                  enrolled.map((r) => {
+                    const box = h("input", {
+                      type: "checkbox",
+                      "aria-label": `Select ${r.machine_name}`,
+                      checked: selected.has(r.id),
+                      onchange: () => {
+                        if (box.checked) selected.add(r.id);
+                        else selected.delete(r.id);
+                        drawEnrolled();
+                      },
+                    });
+                    return h(
+                      "tr",
+                      null,
+                      h("td", { class: "check" }, box),
+                      h("th", { scope: "row" }, r.machine_name),
+                      h("td", null, r.department?.name ?? "None"),
+                      h("td", null, r.owner?.username ?? "Shared"),
+                      h("td", null, r.key?.name ?? ""),
+                      h("td", null, `${OS_LABEL[r.os] ?? r.os} (${r.arch}), ${r.agent_version}`),
+                      h(
+                        "td",
+                        { title: `Expires ${relativeTime(r.expires_at)}` },
+                        relativeTime(r.created_at),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ),
+          ],
+    );
+  }
+
   async function loadPending() {
     const { requests } = await api<{ requests: PairingRequest[] }>("/pairing");
+    enrolled = requests.filter((r) => r.key !== null);
+    drawEnrolled();
+    if (!admin) return;
+    const withCode = requests.filter((r) => r.key === null);
     pendingCard.replaceChildren(
       h(
         "div",
@@ -176,7 +311,7 @@ export async function approvePage(ctx: PageContext) {
         h(
           "div",
           null,
-          h("h2", { id: "pending-title" }, "Waiting to join"),
+          h("h2", { id: "pending-title" }, "Waiting with a code"),
           h(
             "p",
             null,
@@ -184,7 +319,7 @@ export async function approvePage(ctx: PageContext) {
           ),
         ),
       ),
-      requests.length === 0
+      withCode.length === 0
         ? h("p", { class: "muted" }, "No machines are waiting right now.")
         : h(
             "div",
@@ -206,7 +341,7 @@ export async function approvePage(ctx: PageContext) {
               h(
                 "tbody",
                 null,
-                requests.map((r) =>
+                withCode.map((r) =>
                   h(
                     "tr",
                     null,
@@ -237,16 +372,16 @@ export async function approvePage(ctx: PageContext) {
           null,
           "When you run ",
           h("code", null, "ccunified setup"),
-          " on a new machine and choose to join this dashboard, it shows a code. Enter it here.",
+          " on a new machine and choose to join this dashboard, it shows a code. Enter it here. Machines that joined with an enrollment key are listed below.",
         ),
       ),
     ),
     h("section", { class: "card" }, form),
+    enrolledCard,
   );
-  // Only admins see who is waiting; managers approve the code they're given.
+  // Only admins see who is waiting with a code; managers approve the code they're given.
   if (admin) ctx.main.append(pendingCard);
   code.focus();
-  if (!admin) return undefined;
   await loadPending();
   const timer = window.setInterval(() => {
     if (document.visibilityState === "visible") void loadPending().catch(() => undefined);

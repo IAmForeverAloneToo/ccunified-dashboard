@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { machineAuth } from "./agent/auth";
+import { checkEnrollKey, enroll } from "./agent/enroll";
 import { ingest } from "./agent/ingest";
 import { pollPairing, startPairing } from "./agent/pair";
 import { receivePrices } from "./agent/prices";
@@ -10,8 +11,9 @@ import {
   listDepartments,
   renameDepartment,
 } from "./api/departments";
+import { createEnrollmentKey, listEnrollmentKeys, revokeEnrollmentKey } from "./api/enrollment";
 import { listMachines, removeMachine, revokeMachine, updateMachine } from "./api/machines";
-import { approvePairing, denyPairing, listPairing } from "./api/pairing";
+import { approvePairing, decidePairing, denyPairing, listPairing } from "./api/pairing";
 import { listPrices, updatePrices } from "./api/prices";
 import { checkForUpdates, readSettings, updateSettings } from "./api/settings";
 import { summary, usageDays } from "./api/summary";
@@ -45,6 +47,8 @@ app.get("/healthz", (c) =>
 // Machines: pairing (no key yet) and uploads (upload key).
 app.post("/agent/pair/start", startPairing);
 app.post("/agent/pair/poll", pollPairing);
+app.post("/agent/enroll", enroll);
+app.post("/agent/enroll/check", checkEnrollKey);
 app.post("/agent/ingest", machineAuth, ingest);
 app.post("/agent/prices", machineAuth, receivePrices);
 
@@ -78,9 +82,14 @@ api.post("/departments", requireUser("admin"), createDepartment);
 api.patch("/departments/:id", requireUser("admin"), renameDepartment);
 api.delete("/departments/:id", requireUser("admin"), deleteDepartment);
 
-api.get("/pairing", requireUser("admin"), listPairing);
+api.get("/pairing", requireUser(), listPairing);
 api.post("/pairing/approve", requireUser(), approvePairing);
 api.post("/pairing/deny", requireUser(), denyPairing);
+api.post("/pairing/decide", requireUser(), decidePairing);
+
+api.get("/enrollment-keys", requireUser(), listEnrollmentKeys);
+api.post("/enrollment-keys", requireUser(), createEnrollmentKey);
+api.delete("/enrollment-keys/:id", requireUser(), revokeEnrollmentKey);
 
 api.get("/users", requireUser(), listUsers);
 api.post("/users", requireUser(), createUser);

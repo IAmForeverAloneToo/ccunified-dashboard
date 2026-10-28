@@ -6,6 +6,10 @@
 //     missed syncs when the computer wakes up.
 //   - Linux: a systemd user timer (kept running while you're logged out by
 //     enabling "lingering"), or a crontab entry where systemd isn't available.
+//
+// A system-wide install (System) runs `ccunified sync --all-users` instead,
+// as SYSTEM (a Task Scheduler task) or root (a systemd timer, or a file in
+// /etc/cron.d), whether or not anyone is logged in.
 package schedule
 
 import (
@@ -47,6 +51,16 @@ type Scheduler struct {
 	Home string
 	// User is the login name (Windows task name, lingering).
 	User string
+	// System schedules the sync of every user account, as SYSTEM or root.
+	System bool
+}
+
+// syncArgs are the arguments the schedule runs the program with.
+func (s *Scheduler) syncArgs() string {
+	if s.System {
+		return "sync --all-users --quiet"
+	}
+	return "sync --quiet"
 }
 
 // Default returns a scheduler for this machine and the installed program.
@@ -60,6 +74,12 @@ func Default() (*Scheduler, error) {
 	}
 	home, _ := os.UserHomeDir()
 	return &Scheduler{Run: execRunner, Exe: exe, Home: home, User: currentUser()}, nil
+}
+
+// SystemDefault returns a scheduler for a system-wide install of the
+// program at exe.
+func SystemDefault(exe string) *Scheduler {
+	return &Scheduler{Run: execRunner, Exe: exe, System: true}
 }
 
 // ErrUnsupported means no supported scheduler was found.
