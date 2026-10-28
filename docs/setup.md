@@ -93,7 +93,7 @@ token only while setup runs and never saves it.
 | Time zone | The days on the dashboard start and end in this zone. The default is your computer's; type part of a city name to search. Admins can change it later |
 | Admin username and password | Your dashboard login. At least 10 characters, typed twice. You can add more people later |
 | Name for this machine | How it's labelled on the dashboard. The default is the computer's name |
-| How often to upload | Every 15, 30 (default) or 60 minutes |
+| How often to upload | Every 15 (default), 30 or 60 minutes |
 
 The wizard then shows a summary and asks **Create it now?** Nothing is created
 on Cloudflare before you answer **Y**.
@@ -112,7 +112,7 @@ on Cloudflare before you answer **Y**.
   … Waiting for https://usage.example.com to come online (new addresses can take a few minutes)
   ✓ https://usage.example.com is online
   ✓ Saved this machine's settings
-  ✓ Background sync every 30 minutes (Task Scheduler: "ccunified sync (you)")
+  ✓ Background sync every 15 minutes (Task Scheduler: "ccunified sync (you)")
   … Uploading this machine's usage history
   ✓ Uploaded this machine's history (42 day(s) with usage)
 ```

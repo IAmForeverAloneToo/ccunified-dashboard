@@ -30,7 +30,7 @@ the dashboard.
      optional). The wizard checks that a ccunified dashboard answers there.
    - **Name for this machine**, shown on the dashboard. The default is the
      computer's name.
-   - **How often to upload:** every 15, 30 or 60 minutes.
+   - **How often to upload:** every 15 (the default), 30 or 60 minutes.
 
 3. **The machine shows a code** and waits:
 
@@ -80,7 +80,7 @@ a time or all at once.
 
    `CCUNIFIED_NAME` sets the machine's name (default: its hostname) and
    `CCUNIFIED_INTERVAL` how often it uploads (15, 30 or 60 minutes; default
-   30). On a machine that already has ccunified, run
+   15). On a machine that already has ccunified, run
    `ccunified setup --url https://usage.example.com --enroll-key ccu_e_…`
    instead (see [the commands](commands.md#ccunified-setup)).
 

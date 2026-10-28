@@ -389,8 +389,8 @@ test("the setup wizard creates the dashboard on Cloudflare", async () => {
   await s.expect("Name for this machine on the dashboard");
   s.answer(m1.name);
   await s.expect("How often should this machine upload its usage?");
-  await s.expect("Choose a number [2]");
-  s.answer(""); // the default: every 30 minutes
+  await s.expect("Choose a number [1]");
+  s.answer(""); // the default: every 15 minutes
 
   await s.expect(`Dashboard:   ${DASHBOARD}`);
   await s.expect("Create it now?");
@@ -449,8 +449,8 @@ test("a second machine joins with a code approved in the dashboard", async () =>
   s.answer(HOST); // without https://, as people type it
   await s.expect("Name for this machine on the dashboard");
   s.answer(m2.name);
-  await s.expect("Choose a number [2]");
-  s.answer("1"); // every 15 minutes
+  await s.expect("Choose a number [1]");
+  s.answer("2"); // every 30 minutes
   const [, code] = await s.expect(/Your code:\s+([A-Z0-9]{4}-[A-Z0-9]{4})/);
   const [, link] = await s.expect(/1\. Open (\S+)/);
   expect(link).toBe(`${DASHBOARD}/approve`);

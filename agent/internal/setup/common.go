@@ -79,7 +79,7 @@ func defaultMachineName() string {
 
 func askInterval(p *prompt.Prompter) (int, error) {
 	i, err := p.Choose("How often should this machine upload its usage?",
-		[]string{"Every 15 minutes", "Every 30 minutes", "Every 60 minutes"}, 1)
+		[]string{"Every 15 minutes", "Every 30 minutes", "Every 60 minutes"}, 0)
 	if err != nil {
 		return 0, err
 	}

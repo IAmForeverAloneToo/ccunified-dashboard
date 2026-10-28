@@ -70,7 +70,7 @@ func runJoin(t *testing.T, d *pairingDashboard, answers string) (error, string, 
 		Now:   func() time.Time { return clock },
 		InstallSchedule: func(cfg *config.Config) (string, error) {
 			calls = append(calls, "schedule")
-			return "Background sync every 30 minutes", nil
+			return "Background sync every 15 minutes", nil
 		},
 		FirstSync: func(context.Context) (string, error) {
 			calls = append(calls, "sync")
@@ -93,7 +93,7 @@ func TestJoinApproved(t *testing.T) {
 	if !strings.Contains(out, "no ccunified dashboard answered") || !strings.Contains(out, "K7QX-82MD") {
 		t.Fatalf("output:\n%s", out)
 	}
-	if d.started[0]["machine_name"] != "Studio PC" || d.started[0]["sync_interval_minutes"] != float64(30) {
+	if d.started[0]["machine_name"] != "Studio PC" || d.started[0]["sync_interval_minutes"] != float64(15) {
 		t.Fatalf("start request: %v", d.started[0])
 	}
 	cfg, err := config.Load()
@@ -124,11 +124,11 @@ func TestJoinDenied(t *testing.T) {
 
 func TestJoinExpiredThenRetried(t *testing.T) {
 	d := &pairingDashboard{script: [][]string{{"expired"}, {"approved"}}}
-	err, out, _, _ := runJoin(t, d, "URL\nLaptop\n1\ny\n")
+	err, out, _, _ := runJoin(t, d, "URL\nLaptop\n2\ny\n")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if len(d.started) != 2 || d.started[1]["sync_interval_minutes"] != float64(15) {
+	if len(d.started) != 2 || d.started[1]["sync_interval_minutes"] != float64(30) {
 		t.Fatalf("started: %v", d.started)
 	}
 }

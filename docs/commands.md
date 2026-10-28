@@ -23,7 +23,7 @@ asks before replacing its settings.
 | `--schedule-only` | Only set up (or repair) the background sync, using the existing settings |
 | `--url URL --enroll-key KEY` | Join that dashboard with an enrollment key, asking nothing; it starts uploading once approved (see [Add many machines](adding-machines.md#add-many-machines-with-a-script)). Running it again changes nothing |
 | `--name NAME` | With a key: this machine's name on the dashboard (default: its hostname) |
-| `--interval 15\|30\|60` | With a key: how often to upload, in minutes (default 30) |
+| `--interval 15\|30\|60` | With a key: how often to upload, in minutes (default 15) |
 | `--all-users` | With a key: set up every account on the computer, each as its own machine. The default when run as root or SYSTEM; needs root or an elevated window |
 | `--this-user` | With a key: set up only this account, even as root or SYSTEM |
 

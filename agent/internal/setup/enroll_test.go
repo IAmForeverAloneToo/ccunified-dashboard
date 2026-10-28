@@ -210,7 +210,7 @@ func TestEnrollAllUsersChecksTheKeyFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	sys, err := config.LoadSystem()
-	if err != nil || sys.EnrollKey != "ccu_e_key" || sys.SyncIntervalMinutes != 30 {
+	if err != nil || sys.EnrollKey != "ccu_e_key" || sys.SyncIntervalMinutes != 15 {
 		t.Fatalf("system: %+v, %v", sys, err)
 	}
 	if !installed || !scheduled || !synced || !strings.Contains(out.String(), "alice: Waiting for approval") {

@@ -21,7 +21,7 @@ type EnrollOptions struct {
 	// Name is this machine's name on the dashboard (default: the hostname).
 	// Unused for all users: each account is "HOST (user)".
 	Name string
-	// Interval is how often to sync, in minutes (default 30).
+	// Interval is how often to sync, in minutes (default 15).
 	Interval int
 }
 
@@ -34,7 +34,7 @@ func (o *EnrollOptions) check(ctx context.Context, h *Hooks) (string, error) {
 		return "", errors.New("that isn't an enrollment key (they start with ccu_e_); create one on the dashboard's Machines page")
 	}
 	if o.Interval == 0 {
-		o.Interval = 30
+		o.Interval = 15
 	}
 	if config.ValidateInterval(o.Interval) != nil {
 		return "", errors.New("the sync interval must be 15, 30 or 60 minutes")

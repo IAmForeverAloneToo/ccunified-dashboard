@@ -131,7 +131,7 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	url := fs.String("url", os.Getenv("CCUNIFIED_URL"), "the dashboard's address (with --enroll-key)")
 	key := fs.String("enroll-key", os.Getenv("CCUNIFIED_ENROLL_KEY"), "join with this enrollment key, asking no questions")
 	name := fs.String("name", os.Getenv("CCUNIFIED_NAME"), "this machine's name on the dashboard (default: its hostname)")
-	interval := fs.Int("interval", envInt("CCUNIFIED_INTERVAL", 30), "sync every 15, 30 or 60 minutes")
+	interval := fs.Int("interval", envInt("CCUNIFIED_INTERVAL", 15), "sync every 15, 30 or 60 minutes")
 	allUsers := fs.Bool("all-users", os.Getenv("CCUNIFIED_ALL_USERS") == "1", "set up every user account on this computer (needs root or an administrator)")
 	thisUser := fs.Bool("this-user", false, "set up only this account, even as root or SYSTEM")
 	if err := fs.Parse(args); err != nil {
