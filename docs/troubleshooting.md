@@ -55,8 +55,9 @@ dashboard, run `ccunified setup` and choose *Join*. To upgrade it, use
 `ccunified server remove` first.
 
 **"this Cloudflare account already has a Worker called "ccunified""**: another
-Worker uses that name. Rename or delete it in Cloudflare, or use another
-account.
+Worker uses that name. If it's left over from an earlier ccunified setup, run
+`ccunified server remove`, which also removes a ccunified Worker without its
+database. Otherwise rename or delete it in Cloudflare, or use another account.
 
 **A step failed partway.** The wizard offers to remove what it created. Accept,
 fix the problem it reported, and run `ccunified setup` again.
@@ -94,7 +95,8 @@ log in at) and that the dashboard opens in a browser.
 **The code expired** (after 10 minutes): the machine offers a new one.
 
 **"the dashboard has too many machines waiting to join right now"**: at most 20
-requests can wait at once, and each network can start 5 every 10 minutes. Deny
+machines showing a code can wait at once, and each network can start 5 every
+10 minutes (machines that joined with an enrollment key don't count). Deny
 stale requests on the Approvals page, or wait a few minutes.
 
 **Approving says "Another machine is already called …"**: names must be unique
@@ -193,8 +195,7 @@ ran `ccunified server update` on a machine with an older ccunified. Run
 `ccunified update` there first.
 
 **A new release isn't shown as available yet.** The dashboard checks GitHub
-for new releases every 6 hours, and also learns about one as soon as any of
-your machines uploads with it. To check right away, click **Check for
+for new releases every 6 hours. To check right away, click **Check for
 updates** on the Settings page.
 
 **"Couldn't check for updates"** on the Settings page: the dashboard couldn't

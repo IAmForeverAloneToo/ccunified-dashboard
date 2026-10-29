@@ -35,7 +35,7 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	if string(cf.uploaded) != "export default {}" || cf.uploadedDB != "old-db" || !cf.workersDevOff {
 		t.Fatalf("upload: %q to %s", cf.uploaded, cf.uploadedDB)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql, 0003_models.sql, 0004_access.sql, 0005_prices.sql, 0006_removed.sql, 0007_enrollment.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0001_init.sql, 0002_tools.sql, 0003_models.sql, 0004_access.sql, 0005_prices.sql, 0006_removed.sql, 0007_enrollment.sql, 0008_machine_reports.sql, 0009_pairing_limits.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	// It explains how to create the token, like setup does.
@@ -76,7 +76,7 @@ func TestServerUpdateFromTheFirstRelease(t *testing.T) {
 	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql, 0004_access.sql, 0005_prices.sql, 0006_removed.sql, 0007_enrollment.sql)") {
+	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql, 0004_access.sql, 0005_prices.sql, 0006_removed.sql, 0007_enrollment.sql, 0008_machine_reports.sql, 0009_pairing_limits.sql)") {
 		t.Fatalf("output:\n%s", out)
 	}
 	rows, err := cf.db.Query(ctx, "SELECT id, tools FROM machines ORDER BY id")
