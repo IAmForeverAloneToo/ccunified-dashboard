@@ -29,7 +29,10 @@ export function enrollCommands(repo: string, key: string): HTMLElement[] {
       "Run as root or SYSTEM, as deployment tools do. Each account that uses a coding tool joins as its own machine, like “LAPTOP (alice)”, including accounts added later.",
     ),
     label("Linux (as root):"),
-    command(`curl -fsSL ${base}/install.sh | sudo env ${sh} sh`),
+    // Exported, not on sudo's command line, where other accounts could see the key.
+    command(
+      `export ${sh}; curl -fsSL ${base}/install.sh | sudo --preserve-env=CCUNIFIED_URL,CCUNIFIED_ENROLL_KEY sh`,
+    ),
     label("Windows (as SYSTEM, such as from Intune or Group Policy):"),
     command(`${ps}; irm ${base}/install.ps1 | iex`),
     label("Windows (in an administrator's elevated PowerShell):"),

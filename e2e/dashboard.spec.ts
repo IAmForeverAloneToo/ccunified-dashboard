@@ -1410,7 +1410,7 @@ test.describe("adding many machines", () => {
     const key = (await dialog.locator(".command code").first().textContent()) ?? "";
     expect(key).toMatch(/^ccu_e_/);
     await expect(dialog.locator(".command code").nth(1)).toHaveText(
-      `curl -fsSL https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.sh | sudo env CCUNIFIED_URL=${new URL(demo.url).origin} CCUNIFIED_ENROLL_KEY=${key} sh`,
+      `export CCUNIFIED_URL=${new URL(demo.url).origin} CCUNIFIED_ENROLL_KEY=${key}; curl -fsSL https://github.com/IAmForeverAloneToo/ccunified-dashboard/releases/latest/download/install.sh | sudo --preserve-env=CCUNIFIED_URL,CCUNIFIED_ENROLL_KEY sh`,
     );
     await dialog.getByRole("button", { name: "Done" }).click();
     const row = card.locator("tbody tr").filter({ hasText: "Build farm" });
