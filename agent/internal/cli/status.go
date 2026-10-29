@@ -99,10 +99,15 @@ func runStatus(ctx context.Context, env *Env, args []string) error {
 			switch pend.Status {
 			case "waiting":
 				row("Status", fmt.Sprintf("waiting for approval on the dashboard's Approvals page (asked %s)", ago(pend.RequestedAt, time.Now())))
+			case "approved":
+				row("Status", fmt.Sprintf("approved as %q; the next sync saves the settings and uploads", pend.MachineName))
 			case "denied":
 				row("Status", "the request to join was denied; to ask again, run ccunified setup with an enrollment key")
 			default:
 				row("Status", "the request to join expired; to ask again, run ccunified setup with an enrollment key")
+			}
+			if state := config.LoadState(); state.LastError != "" {
+				row("Last problem", fmt.Sprintf("%s: %s", ago(state.LastAttemptAt, time.Now()), state.LastError))
 			}
 			row("Schedule", ScheduleStatus())
 			row("Settings", dir)
@@ -184,12 +189,14 @@ func statusAllUsers(ctx context.Context, env *Env, sys *config.System) error {
 			}
 			row(e.Name(), line)
 		} else if pend, err := config.LoadPendingIn(dir); err == nil {
-			switch pend.Status {
-			case "waiting":
-				row(e.Name(), fmt.Sprintf("%q, waiting for approval (asked %s)", pend.MachineName, ago(pend.RequestedAt, now)))
-			default:
-				row(e.Name(), fmt.Sprintf("%q, request to join %s", pend.MachineName, pend.Status))
+			line := fmt.Sprintf("%q, request to join %s", pend.MachineName, pend.Status)
+			if pend.Status == "waiting" {
+				line = fmt.Sprintf("%q, waiting for approval (asked %s)", pend.MachineName, ago(pend.RequestedAt, now))
 			}
+			if st := config.LoadStateIn(dir); st.LastError != "" {
+				line += "; last problem: " + st.LastError
+			}
+			row(e.Name(), line)
 		} else {
 			row(e.Name(), "no usage yet")
 		}

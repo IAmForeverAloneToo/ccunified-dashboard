@@ -118,7 +118,11 @@ the old machine first.
   usage.
 - **Approved, but nothing uploaded yet**: the machine finds out at its next
   sync, within its upload interval. Run `ccunified sync` on it (or
-  `ccunified sync --all-users`) to start right away.
+  `ccunified sync --all-users`) to start right away. If `ccunified status`
+  shows a *Last problem*, that's why the last try failed.
+- **"this machine is already waiting for approval on …"**: it asked another
+  dashboard to join. To switch, run `ccunified uninstall`, then set it up
+  again.
 
 ## Uploads
 
@@ -140,6 +144,23 @@ again. Tools ccusage doesn't support can't be shown.
 
 **"couldn't reach the dashboard"**: a network problem. The background sync
 tries again on its next run; to try now, run `ccunified sync`.
+
+**"the dashboard is busy and asked to wait …"**: the dashboard asked for a
+pause of more than a minute. The next scheduled sync tries again, and sends
+everything since the last successful one.
+
+**"another sync is already running on this machine"**: a sync (or
+`ccunified setup --enroll-key`) was still running. If no sync is running, the
+lock is left from one that was stopped; it's taken over once its program has
+ended (on Windows, after 30 minutes).
+
+**"ccusage took too long reading the logs and was stopped"**: reading the
+logs took more than 5 minutes, usually on a slow disk with a very large
+history. The next sync tries again.
+
+**A *Note* says some days "had more than 50 models"**: the dashboard takes at
+most 50 models per day; the smallest were added up as `other-models`, so no
+tokens or costs are lost.
 
 **"this machine was revoked on the dashboard"** or **"the dashboard didn't
 accept this machine's upload key"**: the machine needs to join again; run

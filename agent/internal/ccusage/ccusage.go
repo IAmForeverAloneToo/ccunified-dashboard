@@ -349,13 +349,17 @@ type Options struct {
 	AllTools bool
 }
 
-const runTimeout = 5 * time.Minute
+// runTimeout bounds a whole report, retries included (replaced in tests).
+var runTimeout = 5 * time.Minute
 
 // Daily runs ccusage's daily report and parses the result. If fetching
 // current prices fails, it retries once with the built-in prices. If reading
 // every tool fails, it falls back to Claude Code alone and says why in the
-// report's Warning.
+// report's Warning. All runs share one deadline, and nothing is retried once
+// it has passed.
 func (r *Runner) Daily(ctx context.Context, opts Options) (*Report, error) {
+	ctx, cancel := context.WithTimeout(ctx, runTimeout)
+	defer cancel()
 	opts.Offline = opts.Offline || r.Offline
 	report, err := r.dailyWithFallbackPrices(ctx, opts)
 	if err != nil && opts.AllTools && !errors.Is(err, ErrChecksum) && ctx.Err() == nil {
@@ -396,9 +400,9 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 	if opts.Offline {
 		args = append(args, "--offline")
 	}
-	ctx, cancel := context.WithTimeout(ctx, runTimeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Path, args...)
+	// Don't wait for programs ccusage started once it is stopped.
+	cmd.WaitDelay = 5 * time.Second
 	hideWindow(cmd)
 	runAs(cmd, r.AsUser)
 	env := r.Env
@@ -410,6 +414,9 @@ func (r *Runner) daily(ctx context.Context, opts Options) (*Report, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("ccusage took too long reading the logs and was stopped")
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if !opts.AllTools && strings.Contains(msg, "No valid Claude data directories found") {
 			return &Report{Sources: []string{"claude"}, NoClaudeData: true}, nil

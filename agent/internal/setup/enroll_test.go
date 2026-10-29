@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,7 @@ type enrollDashboard struct {
 	enrolled []map[string]any
 	status   string
 	refuse   string // an error code for /agent/enroll
+	pollCode int    // an HTTP status for polls (503: down, 404: forgotten)
 }
 
 func (d *enrollDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +52,11 @@ func (d *enrollDashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"expires_in": 30 * 24 * 3600, "interval": 5,
 		})
 	case "/agent/pair/poll":
+		if d.pollCode != 0 {
+			w.WriteHeader(d.pollCode)
+			json.NewEncoder(w).Encode(map[string]string{"error": map[int]string{404: "not_found"}[d.pollCode]})
+			return
+		}
 		res := map[string]any{"status": d.status}
 		if d.status == "approved" {
 			res["token"] = "ccu_m_" + strings.Repeat("t", 43)
@@ -181,6 +189,102 @@ func TestDeniedAndExpiredRequestsStop(t *testing.T) {
 	}
 	if len(d.enrolled) != 2 {
 		t.Errorf("enroll requests: %d", len(d.enrolled))
+	}
+}
+
+func TestEnrollUserDoesntAskAgainWhileTheDashboardIsDown(t *testing.T) {
+	d, url, _, h := enrollSetup(t)
+	p := prompt.New(strings.NewReader(""), &bytes.Buffer{})
+	o := EnrollOptions{URL: url, Key: "ccu_e_key"}
+	if err := EnrollUser(context.Background(), p, h, o); err != nil {
+		t.Fatal(err)
+	}
+	d.pollCode = http.StatusServiceUnavailable
+	if err := EnrollUser(context.Background(), p, h, o); err == nil {
+		t.Fatal("the dashboard's trouble was hidden")
+	}
+	if pend, err := config.LoadPending(); len(d.enrolled) != 1 || err != nil || pend.Status != "waiting" {
+		t.Fatalf("asked again: %d request(s), pending %+v, %v", len(d.enrolled), pend, err)
+	}
+}
+
+func TestEnrollUserRefusesToSwitchAWaitingRequest(t *testing.T) {
+	d, url, _, h := enrollSetup(t)
+	p := prompt.New(strings.NewReader(""), &bytes.Buffer{})
+	other := &config.Pending{DashboardURL: "https://other.example.com", DeviceCode: "x", MachineName: "PC", Status: "waiting"}
+	if err := other.Save(); err != nil {
+		t.Fatal(err)
+	}
+	err := EnrollUser(context.Background(), p, h, EnrollOptions{URL: url, Key: "ccu_e_key"})
+	if err == nil || !strings.Contains(err.Error(), "already waiting for approval on https://other.example.com") || len(d.enrolled) != 0 {
+		t.Fatalf("err=%v requests=%d", err, len(d.enrolled))
+	}
+	if pend, _ := config.LoadPending(); pend.DashboardURL != "https://other.example.com" {
+		t.Fatalf("pending replaced: %+v", pend)
+	}
+}
+
+func TestEnrollUserWaitsForARunningSync(t *testing.T) {
+	d, url, _, h := enrollSetup(t)
+	var out bytes.Buffer
+	p := prompt.New(strings.NewReader(""), &out)
+	unlock, err := config.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Sleep = func(context.Context, time.Duration) error { unlock(); return nil }
+	if err := EnrollUser(context.Background(), p, h, EnrollOptions{URL: url, Key: "ccu_e_key"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.enrolled) != 1 || !strings.Contains(out.String(), "Waiting for the running sync") {
+		t.Fatalf("requests=%d output: %s", len(d.enrolled), out.String())
+	}
+	// The lock is released afterwards.
+	again, err := config.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again()
+}
+
+func TestApprovalSurvivesSettingsThatCantBeSaved(t *testing.T) {
+	d, url, _, h := enrollSetup(t)
+	p := prompt.New(strings.NewReader(""), &bytes.Buffer{})
+	if err := EnrollUser(context.Background(), p, h, EnrollOptions{URL: url, Key: "ccu_e_key"}); err != nil {
+		t.Fatal(err)
+	}
+	// Left by a machine this one replaces.
+	(&config.State{BackfillTimezone: "UTC", BackfillFormat: 2, UploadFormat: 2}).Save()
+	// config.json can't be written.
+	dir, _ := config.Dir()
+	blocker := filepath.Join(dir, "config.json")
+	os.MkdirAll(filepath.Join(blocker, "x"), 0o700)
+	d.status = "approved"
+	pend, _ := config.LoadPending()
+	if _, err := enroll.Check(context.Background(), pend); err == nil || !strings.Contains(err.Error(), "approved, but") {
+		t.Fatalf("got %v", err)
+	}
+	// The upload key, handed over only once, is kept; the dashboard
+	// meanwhile forgot the request.
+	d.pollCode = http.StatusNotFound
+	os.RemoveAll(blocker)
+	pend, err := config.LoadPending()
+	if err != nil || pend.Status != "approved" {
+		t.Fatalf("pending: %+v, %v", pend, err)
+	}
+	cfg, err := enroll.Check(context.Background(), pend)
+	if err != nil || cfg.MachineID != "m-1" || cfg.Timezone != "Europe/Berlin" || !strings.HasPrefix(cfg.Token, "ccu_m_") {
+		t.Fatalf("config: %+v, %v", cfg, err)
+	}
+	if _, err := config.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadPending(); !errors.Is(err, config.ErrNoPending) {
+		t.Errorf("pending.json is still there: %v", err)
+	}
+	// The new machine starts with a fresh state, so it uploads its whole history.
+	if st := config.LoadState(); st.BackfillTimezone != "" || st.UploadFormat != 0 {
+		t.Errorf("state kept: %+v", st)
 	}
 }
 

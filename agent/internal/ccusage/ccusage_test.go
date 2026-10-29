@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParse(t *testing.T) {
@@ -186,6 +187,31 @@ func TestTamperedCcusageIsRefused(t *testing.T) {
 	if _, err := bad.Daily(context.Background(), Options{Timezone: "UTC"}); err == nil ||
 		!strings.Contains(err.Error(), "does not match the pinned version") {
 		t.Fatalf("tampered binary was run: %v", err)
+	}
+}
+
+func TestSlowCcusageIsStoppedOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script")
+	}
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	script := filepath.Join(dir, "ccusage")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho run >> "+runs+"\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := runTimeout
+	runTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { runTimeout = old })
+
+	start := time.Now()
+	_, err := (&Runner{Path: script}).Daily(context.Background(), Options{Timezone: "UTC", AllTools: true})
+	if err == nil || !strings.Contains(err.Error(), "took too long") {
+		t.Fatalf("got %v", err)
+	}
+	// No other prices and no Claude Code-only run after the time is up.
+	if data, _ := os.ReadFile(runs); strings.Count(string(data), "run") != 1 || time.Since(start) > 5*time.Second {
+		t.Fatalf("ran %q in %s", data, time.Since(start))
 	}
 }
 

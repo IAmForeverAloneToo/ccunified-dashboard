@@ -88,9 +88,10 @@ func askInterval(p *prompt.Prompter) (int, error) {
 
 // finish saves the configuration, starts the background schedule and runs
 // the first upload. Problems after saving are reported, not fatal: the
-// machine is connected and the next run will catch up.
+// machine is connected and the next run will catch up. The sync state of a
+// machine it replaces is started afresh, so the whole history is uploaded.
 func finish(ctx context.Context, p *prompt.Prompter, h *Hooks, cfg *config.Config) error {
-	if err := cfg.Save(); err != nil {
+	if err := cfg.SaveNew(); err != nil {
 		return fmt.Errorf("couldn't save this machine's settings: %w", err)
 	}
 	config.Log("set up: dashboard %s, machine %q", cfg.DashboardURL, cfg.MachineName)

@@ -133,6 +133,26 @@ func TestJoinExpiredThenRetried(t *testing.T) {
 	}
 }
 
+func TestSetupAgainStartsTheStateAfresh(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	// A machine that was revoked, then set up again.
+	cfg := &config.Config{
+		DashboardURL: "https://usage.example.com", MachineID: "m-old", MachineName: "PC",
+		Token: "ccu_m_" + strings.Repeat("t", 43), Timezone: "UTC", SyncIntervalMinutes: 15,
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	(&config.State{BackfillTimezone: "UTC", BackfillFormat: 2, UploadFormat: 2, LastError: "revoked"}).Save()
+	cfg.MachineID = "m-new"
+	if err := finish(context.Background(), prompt.New(strings.NewReader(""), &bytes.Buffer{}), &Hooks{}, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if st := config.LoadState(); st.BackfillTimezone != "" || st.BackfillFormat != 0 || st.UploadFormat != 0 || st.LastError != "" {
+		t.Fatalf("state kept: %+v", st)
+	}
+}
+
 func TestValidMachineName(t *testing.T) {
 	for _, bad := range []string{"", "   ", strings.Repeat("x", 65), "bell\a"} {
 		if ValidMachineName(bad) == nil {

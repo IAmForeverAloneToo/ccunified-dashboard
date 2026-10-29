@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -145,8 +146,9 @@ func TestSyncUploadsRealUsage(t *testing.T) {
 		if u.Range.From != want {
 			t.Fatalf("gap before %s (want %s)", u.Range.From, want)
 		}
-		if u.SchemaVersion != 2 || len(u.Sources) != len(ccusage.Tools) {
-			t.Fatalf("format %d covering %v", u.SchemaVersion, u.Sources)
+		// Each tool from its first day with usage on.
+		if u.SchemaVersion != 2 || (fmt.Sprint(u.Sources) != "[claude]" || u.Range.From != "2026-10-10") && fmt.Sprint(u.Sources) != "[claude codex]" {
+			t.Fatalf("format %d covering %v from %s", u.SchemaVersion, u.Sources, u.Range.From)
 		}
 		next, _ := time.Parse(time.DateOnly, u.Range.To)
 		want = next.AddDate(0, 0, 1).Format(time.DateOnly)
@@ -289,5 +291,15 @@ func TestOnlyOneSyncAtATime(t *testing.T) {
 	defer unlock()
 	if code := Main([]string{"sync"}, env); code != 1 || !strings.Contains(out.String(), "already running") {
 		t.Fatalf("exit %d: %s", code, out)
+	}
+	// The problem is logged and shown by status.
+	logPath, _ := config.LogPath()
+	if data, _ := os.ReadFile(logPath); !strings.Contains(string(data), "sync failed: another sync is already running") {
+		t.Errorf("log: %s", data)
+	}
+	out.Reset()
+	Main([]string{"status"}, env)
+	if !strings.Contains(out.String(), "Last problem: just now: another sync is already running") {
+		t.Errorf("status:\n%s", out)
 	}
 }

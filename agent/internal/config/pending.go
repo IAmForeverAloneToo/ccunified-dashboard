@@ -19,8 +19,15 @@ type Pending struct {
 	SyncIntervalMinutes int       `json:"sync_interval_minutes"`
 	RequestedAt         time.Time `json:"requested_at"`
 	ExpiresAt           time.Time `json:"expires_at"`
-	// Status is "waiting", or "denied" or "expired" once the dashboard says so.
+	// Status is "waiting", or "denied" or "expired" once the dashboard says
+	// so. It is "approved" when the dashboard handed over the upload key but
+	// config.json couldn't be written yet: the next sync finishes from here.
 	Status string `json:"status"`
+	// Set once approved: the machine's id, upload key and the dashboard's
+	// time zone (MachineName is then the name it was given).
+	MachineID string `json:"machine_id,omitempty"`
+	Token     string `json:"token,omitempty"`
+	Timezone  string `json:"timezone,omitempty"`
 }
 
 // ErrNoPending means no request to join is waiting.
