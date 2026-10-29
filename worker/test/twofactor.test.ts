@@ -122,3 +122,75 @@ describe("two-factor login", () => {
     expect((await w.login(u.username, u.key)).status).toBe(200);
   });
 });
+
+describe("two-factor codes under attack", () => {
+  let w: TestWorker;
+  beforeAll(async () => {
+    w = await startWorker();
+  });
+  afterAll(() => w.dispose());
+
+  /** A user with two-factor on, and their secret and recovery codes. */
+  async function withTwoFactor() {
+    const u = await w.createUser({ role: "viewer" });
+    const post = (path: string, body: unknown) =>
+      w.fetch(path, { ...jsonInit("POST", body), cookie: u.cookie });
+    const setup = await post("/api/me/2fa/setup", { key: u.key });
+    const { secret } = (await setup.json()) as { secret: string };
+    const enabled = await post("/api/me/2fa/enable", { code: await totpAt(secret, currentStep()) });
+    const { recovery_codes } = (await enabled.json()) as { recovery_codes: string[] };
+    // The next code, which the steps above haven't used.
+    const next = await totpAt(secret, currentStep() + 1);
+    return { u, post, next, recovery: recovery_codes };
+  }
+
+  test("a code sent many times at once signs in once", async () => {
+    const signedIn = async (u: TestUser, code: string | undefined, ip: string) => {
+      const tries = Array.from({ length: 20 }, () =>
+        w.fetch(
+          "/api/login",
+          jsonInit(
+            "POST",
+            { username: u.username, key: u.key, code },
+            { headers: { "cf-connecting-ip": ip } },
+          ),
+        ),
+      );
+      return (await Promise.all(tries)).filter((r) => r.status === 200).length;
+    };
+    const a = await withTwoFactor();
+    expect(await signedIn(a.u, a.next, "198.51.100.41")).toBe(1);
+    const b = await withTwoFactor();
+    expect(await signedIn(b.u, b.recovery[0], "198.51.100.42")).toBe(1);
+  });
+
+  test("wrong codes count toward the limit when turning it off", async () => {
+    const { u, post, next } = await withTwoFactor();
+    for (let i = 0; i < 10; i++) {
+      expect((await post("/api/me/2fa/disable", { key: u.key, code: "000000" })).status).toBe(400);
+    }
+    expect((await post("/api/me/2fa/disable", { key: u.key, code: next })).status).toBe(429);
+  });
+
+  test("and when making new recovery codes", async () => {
+    const { u, post, recovery } = await withTwoFactor();
+    for (let i = 0; i < 10; i++) {
+      const res = await post("/api/me/2fa/recovery-codes", { key: u.key, code: "AAAAA-AAAAA" });
+      expect(res.status).toBe(400);
+    }
+    const res = await post("/api/me/2fa/recovery-codes", { key: u.key, code: recovery[0] });
+    expect(res.status).toBe(429);
+    // Signing in waits too.
+    expect((await w.login(u.username, u.key, recovery[1])).status).toBe(429);
+  });
+
+  test("a right code clears the count", async () => {
+    const { u, post, next } = await withTwoFactor();
+    for (let i = 0; i < 9; i++) {
+      await post("/api/me/2fa/recovery-codes", { key: u.key, code: "000000" });
+    }
+    const res = await post("/api/me/2fa/recovery-codes", { key: u.key, code: next });
+    expect(res.status).toBe(200);
+    expect((await post("/api/me/2fa/disable", { key: u.key, code: "000000" })).status).toBe(400);
+  });
+});

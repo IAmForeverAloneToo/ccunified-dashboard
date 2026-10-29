@@ -4,8 +4,8 @@ import { freeName, MachineName, takenNames } from "../api/machines";
 import type { AppEnv } from "../env";
 import { randomToken, sha256Hex } from "../lib/crypto";
 import { fail, readJson } from "../lib/http";
-import { clientIp, recordFailure, retryAfter } from "../lib/ratelimit";
-import { newUserCode, POLL_INTERVAL_SECONDS } from "./pair";
+import { clientIp, countAttempt, recordFailure, retryAfter } from "../lib/ratelimit";
+import { cleanUpPairing, newUserCode, POLL_INTERVAL_SECONDS } from "./pair";
 
 // Enrolling is joining without a code, for scripts that set up many machines:
 // the machine shows an enrollment key instead, and waits (for up to 30 days)
@@ -16,6 +16,10 @@ import { newUserCode, POLL_INTERVAL_SECONDS } from "./pair";
 export const ENROLL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Machines waiting at once, from all keys. */
 const MAX_WAITING = 5000;
+/** Machines waiting at once with one key. */
+const MAX_WAITING_PER_KEY = 1000;
+/** Machines enrolling with one key, so a leaked key can't flood the dashboard. */
+const ENROLLS_PER_KEY = { max: 120, windowMs: 10 * 60 * 1000 };
 /** Wrong keys from one address before it has to wait. */
 const BAD_KEYS_PER_IP = { max: 10, windowMs: 10 * 60 * 1000 };
 
@@ -82,17 +86,24 @@ export async function enroll(c: Context<AppEnv>): Promise<Response> {
   const db = c.env.DB;
   const now = Date.now();
   const key = await usableKey(c, body.enroll_key, now);
+  const wait = await countAttempt(db, [{ key: `enroll-key:${key.id}`, ...ENROLLS_PER_KEY }], now);
+  if (wait > 0) {
+    fail(429, "too_many_requests", { retry_after_seconds: wait }, { "retry-after": String(wait) });
+  }
 
   const waiting = await db
     .prepare(
-      `SELECT COUNT(*) AS n FROM pairing_requests
+      `SELECT COUNT(*) AS n, COALESCE(SUM(enrollment_key_id = ?2), 0) AS mine
+         FROM pairing_requests
         WHERE status = 'pending' AND expires_at > ?1 AND enrollment_key_id IS NOT NULL`,
     )
-    .bind(now)
-    .first<{ n: number }>();
-  if ((waiting?.n ?? 0) >= MAX_WAITING) fail(429, "too_many_pending");
+    .bind(now, key.id)
+    .first<{ n: number; mine: number }>();
+  if ((waiting?.n ?? 0) >= MAX_WAITING || (waiting?.mine ?? 0) >= MAX_WAITING_PER_KEY) {
+    fail(429, "too_many_pending");
+  }
 
-  const name = freeName(body.machine_name, await takenNames(db));
+  const name = freeName(body.machine_name, await takenNames(db, [body.machine_name]));
   const deviceCode = randomToken(32);
   // Counting the use only if it's still allowed keeps max_uses exact when
   // many machines enroll at once.
@@ -104,32 +115,34 @@ export async function enroll(c: Context<AppEnv>): Promise<Response> {
     .bind(now, key.id)
     .run();
   if (used.meta.changes !== 1) fail(401, "enroll_key_used_up");
-  await db
-    .prepare(
-      `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
-                                     agent_version, sync_interval_minutes, client_ip,
-                                     created_at, expires_at, status, department_id, owner_id,
-                                     enrollment_key_id)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, ?13, ?14)`,
-    )
-    .bind(
-      crypto.randomUUID(),
-      await sha256Hex(deviceCode),
-      // Never shown: enrolled machines are approved from the list, not by code.
-      newUserCode(),
-      name,
-      body.os,
-      body.arch,
-      body.agent_version,
-      body.sync_interval_minutes,
-      clientIp(c.req.raw.headers),
-      now,
-      now + ENROLL_TTL_MS,
-      key.department_id,
-      key.owner_id,
-      key.id,
-    )
-    .run();
+  await db.batch([
+    cleanUpPairing(db, now),
+    db
+      .prepare(
+        `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
+                                       agent_version, sync_interval_minutes, client_ip,
+                                       created_at, expires_at, status, department_id, owner_id,
+                                       enrollment_key_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, ?13, ?14)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        await sha256Hex(deviceCode),
+        // Never shown: enrolled machines are approved from the list, not by code.
+        newUserCode(),
+        name,
+        body.os,
+        body.arch,
+        body.agent_version,
+        body.sync_interval_minutes,
+        clientIp(c.req.raw.headers),
+        now,
+        now + ENROLL_TTL_MS,
+        key.department_id,
+        key.owner_id,
+        key.id,
+      ),
+  ]);
 
   return c.json({
     device_code: deviceCode,

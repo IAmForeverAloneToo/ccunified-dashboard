@@ -108,6 +108,51 @@ describe("login", () => {
     expect((await w.login(u.username, u.key)).status).toBe(200);
   });
 
+  test("wrong passwords sent all at once are counted before they're checked", async () => {
+    const u = await w.createUser();
+    const ip = { "cf-connecting-ip": "198.51.100.30" };
+    const results = await Promise.all(
+      Array.from({ length: 30 }, () =>
+        w.fetch(
+          "/api/login",
+          jsonInit("POST", { username: u.username, key: newLoginKey() }, { headers: ip }),
+        ),
+      ),
+    );
+    const statuses = results.map((r) => r.status);
+    // Only the account's limit of 10 were checked; the rest were refused.
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(20);
+    expect((await w.login(u.username, u.key)).status).toBe(429);
+  });
+
+  test("the same goes for one address trying many accounts at once", async () => {
+    const ip = { "cf-connecting-ip": "198.51.100.31" };
+    const results = await Promise.all(
+      Array.from({ length: 60 }, (_, i) =>
+        w.fetch(
+          "/api/login",
+          jsonInit("POST", { username: `burst-${i}`, key: newLoginKey() }, { headers: ip }),
+        ),
+      ),
+    );
+    const statuses = results.map((r) => r.status);
+    expect(statuses.filter((s) => s === 401)).toHaveLength(50);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(10);
+  });
+
+  test("successful logins don't count against the address", async () => {
+    const ip = { "cf-connecting-ip": "198.51.100.32" };
+    const u = await w.createUser();
+    for (let i = 0; i < 55; i++) {
+      const res = await w.fetch(
+        "/api/login",
+        jsonInit("POST", { username: u.username, key: u.key }, { headers: ip }),
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+
   test("50 failures from one address block that address", async () => {
     const ip = { "cf-connecting-ip": "198.51.100.77" };
     for (let i = 0; i < 50; i++) {

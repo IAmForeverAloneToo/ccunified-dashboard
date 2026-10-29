@@ -32,6 +32,22 @@ export function normalizeUserCode(input: string): string | undefined {
   return `${clean.slice(0, 4)}-${clean.slice(4)}`;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Forgets old requests: waiting and denied ones a day after they expire, and
+ * approved ones (handed out or never collected) 30 days after approval.
+ */
+export function cleanUpPairing(db: D1Database, now: number): D1PreparedStatement {
+  return db
+    .prepare(
+      `DELETE FROM pairing_requests
+        WHERE (status IN ('pending', 'denied') AND expires_at < ?1)
+           OR (status IN ('approved', 'claimed') AND COALESCE(decided_at, created_at) < ?2)`,
+    )
+    .bind(now - DAY_MS, now - 30 * DAY_MS);
+}
+
 const StartBody = z.strictObject({
   machine_name: MachineName,
   os: z.enum(["windows", "linux", "darwin"]),
@@ -52,9 +68,11 @@ export async function startPairing(c: Context<AppEnv>): Promise<Response> {
   }
 
   const now = Date.now();
+  // Machines showing a code; enrolled machines have their own limits.
   const pending = await db
     .prepare(
-      "SELECT COUNT(*) AS n FROM pairing_requests WHERE status = 'pending' AND expires_at > ?1",
+      `SELECT COUNT(*) AS n FROM pairing_requests
+        WHERE status = 'pending' AND expires_at > ?1 AND enrollment_key_id IS NULL`,
     )
     .bind(now)
     .first<{ n: number }>();
@@ -74,11 +92,7 @@ export async function startPairing(c: Context<AppEnv>): Promise<Response> {
   }
 
   await db.batch([
-    db
-      .prepare(
-        "DELETE FROM pairing_requests WHERE expires_at < ?1 AND status IN ('pending', 'denied')",
-      )
-      .bind(now - 24 * 60 * 60 * 1000),
+    cleanUpPairing(db, now),
     db
       .prepare(
         `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
@@ -114,14 +128,8 @@ export async function startPairing(c: Context<AppEnv>): Promise<Response> {
 interface PairingRow {
   id: string;
   machine_name: string;
-  os: string;
-  arch: string;
-  agent_version: string;
-  sync_interval_minutes: number;
   expires_at: number;
   status: "pending" | "approved" | "denied" | "claimed";
-  department_id: string | null;
-  owner_id: string | null;
 }
 
 /** POST /agent/pair/poll — the machine asks whether it was approved yet. */
@@ -130,8 +138,7 @@ export async function pollPairing(c: Context<AppEnv>): Promise<Response> {
   const db = c.env.DB;
   const req = await db
     .prepare(
-      `SELECT id, machine_name, os, arch, agent_version, sync_interval_minutes, expires_at, status,
-              department_id, owner_id
+      `SELECT id, machine_name, expires_at, status
          FROM pairing_requests WHERE device_code_hash = ?1`,
     )
     .bind(await sha256Hex(body.device_code))
@@ -145,36 +152,38 @@ export async function pollPairing(c: Context<AppEnv>): Promise<Response> {
   if (req.status === "denied") return c.json({ status: "denied" });
   if (req.status === "claimed") return c.json({ status: "expired" });
 
-  // Approved: hand out the upload key exactly once.
-  const claimed = await db
-    .prepare("UPDATE pairing_requests SET status = 'claimed' WHERE id = ?1 AND status = 'approved'")
-    .bind(req.id)
-    .run();
-  if (claimed.meta.changes !== 1) return c.json({ status: "expired" });
-
+  // Approved: hand out the upload key exactly once. The machine is added only
+  // while the request is still approved, and the request is marked as handed
+  // out in the same transaction, so two polls at once can't both get a key
+  // and a failed insert leaves the request approved. The owner stays only if
+  // they may still own machines in the department (see checkOwner): someone
+  // with a role there or an admin, or anyone for a machine without one.
   const token = `ccu_m_${randomToken(32)}`;
   const machineId = crypto.randomUUID();
-  await db.batch([
+  const [added] = await db.batch([
     db
       .prepare(
         `INSERT INTO machines (id, name, os, arch, agent_version, sync_interval_minutes, token_hash,
                                created_at, department_id, owner_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+         SELECT ?1, p.machine_name, p.os, p.arch, p.agent_version, p.sync_interval_minutes, ?2, ?3,
+                p.department_id,
+                CASE WHEN p.department_id IS NULL
+                       OR (SELECT role FROM users WHERE id = p.owner_id) = 'admin'
+                       OR EXISTS (SELECT 1 FROM department_roles r
+                                   WHERE r.user_id = p.owner_id AND r.department_id = p.department_id)
+                     THEN p.owner_id END
+           FROM pairing_requests p
+          WHERE p.id = ?4 AND p.status = 'approved'`,
       )
-      .bind(
-        machineId,
-        req.machine_name,
-        req.os,
-        req.arch,
-        req.agent_version,
-        req.sync_interval_minutes,
-        await sha256Hex(token),
-        now,
-        req.department_id,
-        req.owner_id,
-      ),
-    db.prepare("UPDATE pairing_requests SET machine_id = ?1 WHERE id = ?2").bind(machineId, req.id),
+      .bind(machineId, await sha256Hex(token), now, req.id),
+    db
+      .prepare(
+        `UPDATE pairing_requests SET status = 'claimed', machine_id = ?1
+          WHERE id = ?2 AND status = 'approved'`,
+      )
+      .bind(machineId, req.id),
   ]);
+  if (added?.meta.changes !== 1) return c.json({ status: "expired" });
   const settings = await getSettings(db);
   return c.json({
     status: "approved",

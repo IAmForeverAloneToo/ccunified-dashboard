@@ -69,3 +69,70 @@ describe("0004_access: departments and roles", () => {
     expect(await w.sql("SELECT 1 FROM sessions WHERE user_id = ?1", gone.id)).toEqual([]);
   });
 });
+
+describe("0008_machine_reports", () => {
+  let w: TestWorker;
+  beforeAll(async () => {
+    w = await startWorker({ migrateUntil: "0007_enrollment.sql" });
+  });
+  afterAll(() => w.dispose());
+
+  test("list prices stay in use until a machine reports them; learned versions are forgotten", async () => {
+    await w.sql(
+      `INSERT INTO model_prices (model, source, input, output, cache_write, cache_read, entry, updated_at)
+       VALUES ('m1', 'models.dev', 3, 15, 3.75, 0.3, 'a/m1', 1), ('m2', 'litellm', 1, 5, 1, 0.1, 'm2', 1)`,
+    );
+    await w.sql("INSERT INTO settings (key, value) VALUES ('latest_version', '99.0.0')");
+    await w.sql("UPDATE settings SET value = '[\"m1\",\"m2\"]' WHERE key = 'models'");
+
+    await w.migrate("0008_machine_reports.sql");
+
+    expect(await w.sql("SELECT model, input FROM model_prices ORDER BY model")).toEqual([
+      { model: "m1", input: 3 },
+      { model: "m2", input: 1 },
+    ]);
+    expect(await w.sql("SELECT 1 FROM settings WHERE key = 'latest_version'")).toEqual([]);
+    const m = await w.createMachine();
+    const price = { input: 4, output: 20, cache_write: 5, cache_read: 0.4, entry: "a/m1" };
+    const res = await w.fetch("/agent/prices", {
+      method: "POST",
+      headers: { authorization: `Bearer ${m.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ prices: { m1: { models_dev: price } } }),
+    });
+    expect(res.status).toBe(200);
+    expect(await w.sql("SELECT model, input FROM model_prices ORDER BY model")).toEqual([
+      { model: "m1", input: 4 },
+      { model: "m2", input: 1 },
+    ]);
+  });
+});
+
+describe("0009_pairing_limits", () => {
+  let w: TestWorker;
+  beforeAll(async () => {
+    w = await startWorker({ migrateUntil: "0008_machine_reports.sql" });
+  });
+  afterAll(() => w.dispose());
+
+  test("machines that enrolled with a deleted department's key stop waiting", async () => {
+    const now = Date.now();
+    const request = (id: string, ttl: number) =>
+      w.sql(
+        `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
+           agent_version, sync_interval_minutes, created_at, expires_at, status)
+         VALUES (?1, ?1, 'AAAA-BBBB', ?1, 'linux', 'amd64', '0.7.0', 30, ?2, ?3, 'pending')`,
+        id,
+        now,
+        now + ttl,
+      );
+    await request("orphan", 30 * 24 * 60 * 60 * 1000);
+    await request("code", 10 * 60 * 1000);
+    await w.migrate("0009_pairing_limits.sql");
+    expect(await w.sql("SELECT id, status FROM pairing_requests ORDER BY id")).toEqual([
+      { id: "code", status: "pending" },
+      { id: "orphan", status: "denied" },
+    ]);
+    const [orphan] = await w.sql("SELECT decided_at FROM pairing_requests WHERE id = 'orphan'");
+    expect(Math.abs(Number(orphan?.decided_at) - now)).toBeLessThan(60_000);
+  });
+});

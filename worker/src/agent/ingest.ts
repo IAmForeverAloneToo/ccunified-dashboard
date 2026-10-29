@@ -3,11 +3,21 @@ import type { AppEnv } from "../env";
 import { INGEST_SCHEMA_VERSIONS, IngestPayload, LIMITS, sourcesOf } from "../ingest/schema";
 import { fail, readJson } from "../lib/http";
 import { bumpDataVersion, getSettings, parseList, setSetting } from "../lib/settings";
-import { latestVersion, learnLatestVersion, pickLatest } from "../lib/updates";
+import { latestVersion } from "../lib/updates";
 import { SERVER_VERSION } from "../version";
 
 /** Uploads from one machine closer together than this are refused (backfills wait and retry). */
 const MIN_INTERVAL_MS = 1000;
+
+/**
+ * How many new tools and models one upload may add to the dashboard's lists,
+ * and how long the lists may grow: every summary carries them. Usage of the
+ * ones left out is still stored; they just get no place in the order.
+ */
+export const LIST_LIMITS = {
+  tools: { perUpload: 20, total: 100 },
+  models: { perUpload: 100, total: 1000 },
+} as const;
 
 /**
  * POST /agent/ingest — stores one machine's usage for a date range.
@@ -46,15 +56,14 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
   const keep = rows.map((r) => `${r.source}|${r.day}|${r.model}`);
   const db = c.env.DB;
   const a = payload.agent;
-  const learned = learnLatestVersion(db, settings, a.version);
 
   // Remember which tools have reported usage: per machine, and for the whole
   // dashboard in the order they first appeared (the order of their colors).
   // Models too, for the colors of their families.
   const reported = [...new Set(rows.map((r) => r.source))];
-  const machineTools = appendNew(parseList(machine.tools), reported);
+  const machineTools = appendNew(parseList(machine.tools), reported, LIST_LIMITS.tools);
   const remember = (key: "tools" | "models", known: string[], seen: string[]) => {
-    const all = appendNew(known, seen);
+    const all = appendNew(known, seen, LIST_LIMITS[key]);
     return all.length > known.length ? [setSetting(db, key, JSON.stringify(all))] : [];
   };
   const newTools = remember("tools", settings.tools, reported);
@@ -116,7 +125,6 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
              OR usage_daily.cost_usd IS NOT excluded.cost_usd`,
       )
       .bind(machine.id, now, JSON.stringify(rows)),
-    ...(learned ? [learned] : []),
     ...newTools,
     ...newModels,
   ]);
@@ -130,14 +138,20 @@ export async function ingest(c: Context<AppEnv>): Promise<Response> {
     timezone: settings.timezone,
     server_version: SERVER_VERSION,
     schema_versions: INGEST_SCHEMA_VERSIONS,
-    latest_version: pickLatest(
-      latestVersion(db, settings, c.executionCtx),
-      learned ? a.version : null,
-    ),
+    latest_version: latestVersion(db, settings, c.executionCtx),
   });
 }
 
-/** `known` followed by the items of `seen` it doesn't have yet, in order. */
-function appendNew(known: string[], seen: string[]): string[] {
-  return [...known, ...seen.filter((t) => !known.includes(t))];
+/**
+ * `known` followed by the items of `seen` it doesn't have yet, in order: at
+ * most `perUpload` of them, and only while the list is shorter than `total`.
+ */
+function appendNew(
+  known: string[],
+  seen: string[],
+  limit: { perUpload: number; total: number },
+): string[] {
+  const has = new Set(known);
+  const room = Math.max(0, Math.min(limit.perUpload, limit.total - known.length));
+  return [...known, ...seen.filter((t) => !has.has(t)).slice(0, room)];
 }
