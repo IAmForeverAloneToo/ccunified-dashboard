@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { z } from "zod";
+import { PAIRING_TTL_MS } from "../agent/pair";
 import { seesAll } from "../auth/access";
 import type { AppEnv } from "../env";
 import { fail, readJson } from "../lib/http";
@@ -79,11 +80,27 @@ export async function renameDepartment(c: Context<AppEnv>): Promise<Response> {
 /**
  * DELETE /api/departments/:id (admin) — its machines are left without a
  * department (keeping their owners), and its people lose their roles there.
+ * Its enrollment keys are deleted, and the machines still waiting with them
+ * are denied first: without their key they would look like machines showing
+ * a code.
  */
 export async function deleteDepartment(c: Context<AppEnv>): Promise<Response> {
   const id = c.req.param("id") ?? "";
-  const res = await c.env.DB.prepare("DELETE FROM departments WHERE id = ?1").bind(id).run();
+  const db = c.env.DB;
+  // Also any enrolled machine that already lost its key: only enrolled
+  // machines wait longer than a code's 10 minutes.
+  const [, res] = await db.batch([
+    db
+      .prepare(
+        `UPDATE pairing_requests SET status = 'denied', decided_by = ?1, decided_at = ?2
+          WHERE status = 'pending'
+            AND (enrollment_key_id IN (SELECT id FROM enrollment_keys WHERE department_id = ?3)
+                 OR (enrollment_key_id IS NULL AND expires_at - created_at > ?4))`,
+      )
+      .bind(c.get("user").id, Date.now(), id, PAIRING_TTL_MS),
+    db.prepare("DELETE FROM departments WHERE id = ?1").bind(id),
+  ]);
   // D1 counts the rows its foreign keys changed too.
-  if (res.meta.changes === 0) fail(404, "not_found");
+  if (res?.meta.changes === 0) fail(404, "not_found");
   return c.json({ ok: true });
 }

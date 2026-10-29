@@ -211,3 +211,76 @@ describe("who sees and sets prices", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe("prices most machines agree on", () => {
+  const OPUS = "claude-opus-5-5";
+  const listed = async (model: string, source: string) =>
+    (
+      await w.sql(
+        "SELECT input, entry FROM model_prices WHERE model = ?1 AND source = ?2",
+        model,
+        source,
+      )
+    )[0] ?? null;
+  const revoke = (m: { id: string }) =>
+    w.fetch(`/api/machines/${m.id}/revoke`, { ...jsonInit("POST", {}), cookie: admin.cookie });
+
+  test("one machine can't change a price another machine reports", async () => {
+    const rogue = await w.createMachine({ name: "rogue" });
+    const helper = await w.createMachine({ name: "helper" });
+    const before = await costs();
+    expect(await listed(OPUS, "models.dev")).toEqual({
+      input: 4.5,
+      entry: "anthropic/claude-opus-5-5",
+    });
+    const cheap = { [OPUS]: { models_dev: listPrice(0.01, "x/cheap") } };
+    expect((await sendPrices(cheap, rogue.token)).status).toBe(200);
+    // One machine each: the price reported first stays, and nothing changes.
+    expect(await listed(OPUS, "models.dev")).toMatchObject({ input: 4.5 });
+    expect((await costs()).etag).toBe(before.etag);
+
+    // A second machine agreeing makes it the price most machines report.
+    await sendPrices(cheap, helper.token);
+    expect(await listed(OPUS, "models.dev")).toEqual({ input: 0.01, entry: "x/cheap" });
+    const after = await costs();
+    expect(after.cost[OPUS]).toBeCloseTo(0.01 + 0.05 + 0.0125 + 0.001);
+    expect(after.etag).not.toBe(before.etag);
+
+    // Revoked machines' reports stop counting.
+    expect((await revoke(rogue)).status).toBe(200);
+    expect(await listed(OPUS, "models.dev")).toMatchObject({ input: 4.5 });
+    expect((await costs()).cost[OPUS]).toBeCloseTo(before.cost[OPUS] ?? 0);
+    expect((await revoke(helper)).status).toBe(200);
+    const left = await w.sql(
+      "SELECT 1 FROM model_price_reports WHERE machine_id IN (?1, ?2)",
+      rogue.id,
+      helper.id,
+    );
+    expect(left).toEqual([]);
+  });
+
+  test("a list price no machine reports any more is dropped", async () => {
+    const only = await w.createMachine({ name: "only-k3" });
+    await sendPrices({ k3: { litellm: listPrice(2, "moonshot/k3") } }, only.token);
+    expect(await listed("k3", "litellm")).toEqual({ input: 2, entry: "moonshot/k3" });
+    // The same price from another list entry: the price stays, the entry follows.
+    await sendPrices({ k3: { litellm: listPrice(2, "moonshot/kimi-k3") } }, only.token);
+    expect(await listed("k3", "litellm")).toEqual({ input: 2, entry: "moonshot/kimi-k3" });
+    await revoke(only);
+    expect(await listed("k3", "litellm")).toBeNull();
+  });
+
+  test("500 models' prices fit in one report", async () => {
+    const prices = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [
+        `some-provider-model-name-${i}`,
+        {
+          models_dev: listPrice(1.25, `some-provider/some-provider-model-name-${i}-long-entry`),
+          litellm: listPrice(1.25, `bedrock/us.some-provider.some-provider-model-name-${i}-v1:0`),
+        },
+      ]),
+    );
+    expect(JSON.stringify({ prices }).length).toBeGreaterThan(100 * 1024);
+    expect((await sendPrices(prices)).status).toBe(200);
+  });
+});

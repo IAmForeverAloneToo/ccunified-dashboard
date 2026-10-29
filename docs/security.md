@@ -56,7 +56,16 @@ at your own subdomain.
   machine once when it's approved. The dashboard stores only a SHA-256 hash of
   it.
 - **An upload key can only upload that machine's usage.** It can't read the
-  dashboard or touch other machines' data.
+  dashboard or touch other machines' data. The model prices a machine sends
+  count as that machine's report only: the dashboard uses the price most
+  machines agree on (on a tie, the one reported first), so one machine can't
+  change the prices everyone sees, and a revoked machine's reports stop
+  counting. The versions machines report never decide which release the
+  dashboard offers as an update; only its own check on GitHub does.
+- **One machine can't flood the dashboard's lists:** an upload adds at most
+  20 new tools and 100 new models to the lists every page loads (at most 100
+  tools and 1,000 models in all). Usage of the rest is still stored. People
+  who see only some machines get only those machines' tools and models.
 - **Revoking a machine** on the dashboard stops its key immediately, without
   affecting other machines.
 - **On the machine**, the key is in `config.json` in your user profile's
@@ -75,8 +84,11 @@ at your own subdomain.
   you. Managers don't see the list; they approve the code they were given.
 - The code alone isn't enough to get the key: the machine collects its key with
   a separate secret it never shows, which the dashboard stores only as a hash.
-- At most 20 requests can wait at once, and each network can start 5 every 10
-  minutes.
+- At most 20 machines showing a code can wait at once, and each network can
+  start 5 every 10 minutes.
+- A machine collects its key once, in the same step that adds it to the
+  dashboard. If its owner no longer has a role in its department by then (and
+  isn't an admin), it joins without an owner.
 
 ## Enrollment keys
 
@@ -89,7 +101,11 @@ at your own subdomain.
   number of machines, and **revoking** it stops it at once and denies the
   machines still waiting with it.
 - **Wrong keys are slowed down:** after 10 from one network in 10 minutes,
-  that network has to wait. At most 5,000 machines can wait at once.
+  that network has to wait. At most 5,000 machines can wait at once, at most
+  1,000 of them with the same key, and at most 120 machines can enroll with
+  one key in 10 minutes.
+- **Deleting a department** deletes its keys and denies the machines still
+  waiting with them.
 - Managers create keys only for the departments they manage, and approve only
   those departments' machines.
 - **On a computer set up for every account**, the key and each account's
@@ -124,11 +140,14 @@ at your own subdomain.
   role, ends all of them, immediately. A change to your department roles
   applies from your next request.
 - **Failed logins are limited** to 10 per username and 50 per network in 15
-  minutes. Unknown usernames take as long to check as real ones, so they can't
-  be told apart.
+  minutes. Each attempt is counted before it's checked, so attempts sent all
+  at once can't get past the limit; a successful one takes its count back.
+  Wrong passwords when changing your password or two-factor settings, and
+  wrong two-factor codes, count the same way. Unknown usernames take as long
+  to check as real ones, so they can't be told apart.
 - **Two-factor login** (optional per user) uses standard 6-digit authenticator
-  codes (RFC 6238). A code can't be used twice. The 10 recovery codes work once
-  each and are stored only as hashes.
+  codes (RFC 6238). A code can't be used twice, even when sent twice at once.
+  The 10 recovery codes work once each and are stored only as hashes.
 - **Roles** (dashboard-wide admin and viewer, and manager, viewer and member
   of a department) are checked by the server on every request, and the server
   only sends each person the usage, machines and people they may see; see

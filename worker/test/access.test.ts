@@ -182,6 +182,43 @@ describe("who sees which machines", () => {
     expect(a1?.owner?.username).toBe(`member-a-${x.tag}`);
   });
 
+  test("the summary names only the tools and models of the machines the person sees", async () => {
+    const secret = `sales-secret-${x.tag}`;
+    await w.sql(
+      `INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens,
+         cache_creation_tokens, cache_read_tokens, cost_usd, updated_at)
+       VALUES (?1, 'salestool', ?2, ?3, 1, 0, 0, 0, 0, 0)`,
+      x.machines.b1.id,
+      DAY,
+      secret,
+    );
+    const set = (key: string, list: string[]) =>
+      w.sql(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        key,
+        JSON.stringify(list),
+      );
+    await set("tools", ["salestool", "codex", "claude"]);
+    await set("models", [secret, "unused", "opus"]);
+    const lists = async (who: Person, detail: string) => {
+      const res = await get(`/api/summary?from=${DAY}&to=${DAY}${detail}`, x.people[who]);
+      const { tools, models } = (await res.json()) as { tools: string[]; models: string[] };
+      return { tools, models };
+    };
+    for (const detail of ["", "&detail=1"]) {
+      expect(await lists("managerA", detail)).toEqual({ tools: ["claude"], models: ["opus"] });
+      expect(await lists("memberB", detail)).toEqual({
+        tools: ["salestool", "claude"],
+        models: [secret, "opus"],
+      });
+      // People who see every machine get the whole lists.
+      expect(await lists("viewer", detail)).toEqual({
+        tools: ["salestool", "codex", "claude"],
+        models: [secret, "unused", "opus"],
+      });
+    }
+  });
+
   test("a new machine or owner changes the summary's validator", async () => {
     const path = `/api/summary?from=${DAY}&to=${DAY}&detail=1`;
     const first = await get(path, x.people.memberA2);

@@ -170,15 +170,22 @@ export async function summary(c: Context<AppEnv>): Promise<Response> {
     sources[r[3]] = p?.source ?? "ccusage";
   }
 
+  // People who see only some machines get only the tools and models of those
+  // machines' rows, not every department's.
+  const shown = (list: string[], column: 2 | 3) => {
+    if (scope.ids === null) return list;
+    const used = new Set(rows.map((r) => r[column]));
+    return list.filter((id) => used.has(id));
+  };
   const head = {
     timezone: settings.timezone,
     today,
     from,
     to,
     /** Every tool the dashboard has seen, in the order they first appeared. */
-    tools: settings.tools,
+    tools: shown(settings.tools, 2),
     /** Every model the dashboard has seen, in the order they first appeared. */
-    models: settings.models,
+    models: shown(settings.models, 3),
     /** How costs are worked out, and where each model's price came from. */
     pricing: { mode: settings.pricing, sources },
   };

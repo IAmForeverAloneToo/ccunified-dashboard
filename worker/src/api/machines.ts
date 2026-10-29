@@ -10,6 +10,7 @@ import {
 } from "../auth/access";
 import type { AppEnv, SessionUser } from "../env";
 import { fail, readJson } from "../lib/http";
+import { settleListPrices } from "../lib/pricing";
 import { compareVersions } from "../lib/semver";
 import { bumpDataVersion, getSettings, parseList } from "../lib/settings";
 import { latestVersion } from "../lib/updates";
@@ -106,22 +107,34 @@ export async function nameTaken(db: D1Database, name: string, exceptId?: string)
 }
 
 /**
- * The names in use: active machines, and machines waiting to join (lower
- * case), leaving out the waiting requests in `exceptRequests`.
+ * The names in use that could clash with `names` or their numbered forms
+ * ("LAPTOP-2"): active machines, and machines waiting to join (lower case),
+ * leaving out the waiting requests in `exceptRequests`.
  */
 export async function takenNames(
   db: D1Database,
+  names: string[],
   exceptRequests: string[] = [],
 ): Promise<Set<string>> {
+  // Only the names that start like the given ones, which covers every name
+  // freeName may try (it cuts a long name to make room for a number): an
+  // index range per name instead of every name. (The `+` keeps SQLite on the
+  // name index rather than reading every machine waiting to join.)
+  const prefixes = [...new Set(names.map((n) => n.slice(0, 54).trimEnd()))];
   const rows = await db
     .prepare(
-      `SELECT name FROM machines WHERE revoked_at IS NULL
+      `WITH prefixes AS (SELECT value AS p FROM json_each(?1))
+       SELECT m.name FROM prefixes JOIN machines m
+           ON m.name COLLATE NOCASE >= p AND m.name COLLATE NOCASE < p || char(1114111)
+        WHERE m.revoked_at IS NULL
        UNION ALL
-       SELECT machine_name FROM pairing_requests
-        WHERE status IN ('pending', 'approved') AND expires_at > ?1
-          AND id NOT IN (SELECT value FROM json_each(?2))`,
+       SELECT r.machine_name FROM prefixes JOIN pairing_requests r
+           ON r.machine_name COLLATE NOCASE >= p
+          AND r.machine_name COLLATE NOCASE < p || char(1114111)
+        WHERE +r.status IN ('pending', 'approved') AND +r.expires_at > ?2
+          AND r.id NOT IN (SELECT value FROM json_each(?3))`,
     )
-    .bind(Date.now(), JSON.stringify(exceptRequests))
+    .bind(JSON.stringify(prefixes), Date.now(), JSON.stringify(exceptRequests))
     .raw<[string]>();
   return new Set(rows.map(([n]) => n.toLowerCase()));
 }
@@ -211,12 +224,28 @@ export async function updateMachine(c: Context<AppEnv>): Promise<Response> {
  */
 export async function revokeMachine(c: Context<AppEnv>): Promise<Response> {
   const m = await managedMachine(c, c.get("user"));
-  const res = await c.env.DB.prepare(
-    "UPDATE machines SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
-  )
-    .bind(Date.now(), m.id)
-    .run();
-  if (res.meta.changes === 0) fail(404, "not_found");
+  const db = c.env.DB;
+  const now = Date.now();
+  // Its price reports stop counting, so the prices it voted for are settled again.
+  const { results: reported } = await db
+    .prepare("SELECT DISTINCT model FROM model_price_reports WHERE machine_id = ?1")
+    .bind(m.id)
+    .all<{ model: string }>();
+  const [res, , upserted, removed] = await db.batch([
+    db
+      .prepare("UPDATE machines SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL")
+      .bind(now, m.id),
+    db.prepare("DELETE FROM model_price_reports WHERE machine_id = ?1").bind(m.id),
+    ...settleListPrices(
+      db,
+      reported.map((r) => r.model),
+      now,
+    ),
+  ]);
+  if (res?.meta.changes === 0) fail(404, "not_found");
+  if ((upserted?.meta.changes ?? 0) + (removed?.meta.changes ?? 0) > 0) {
+    await bumpDataVersion(db).run();
+  }
   return c.json({ ok: true });
 }
 

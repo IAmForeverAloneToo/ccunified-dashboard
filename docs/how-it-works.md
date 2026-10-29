@@ -140,8 +140,11 @@ The background sync runs `ccunified sync --quiet` on schedule:
 8. **Prices**, at most once a day: after a successful sync, the machine asks
    the dashboard which models it has seen (`POST /agent/prices`), downloads
    the public price lists (models.dev and LiteLLM, kept for a day in its
-   settings folder), and sends each model's price from its maker. These are
-   used only if an admin picks the price lists or custom prices (see
+   settings folder), and sends each model's price from its maker. The
+   dashboard keeps each machine's prices separately and uses, for each model
+   and list, the price most machines report (on a tie, the one reported
+   first); a revoked machine's prices stop counting. These are used only if
+   an admin picks the price lists or custom prices (see
    [Prices](dashboard.md#prices)); a problem here never fails a sync.
 
 Claude Code deletes old session logs (after 30 days by default), and other
@@ -176,8 +179,8 @@ is older than that, and right away when someone clicks **Check for updates**
 on the Settings page. It asks GitHub's API first and, if that fails (the API
 limits addresses that many sites share, such as Cloudflare's), the
 `releases/latest` page, which redirects to the newest release. It records
-when it asked and, if neither answered, why; Settings shows both. It also
-learns of a release as soon as a machine uploads while running it.
+when it asked and, if neither answered, why; Settings shows both. The
+versions machines report don't change it.
 
 ### The background schedule
 
@@ -240,7 +243,7 @@ without a login. Every other path serves the dashboard's pages.
 
 | Table | Holds |
 |---|---|
-| `settings` | Time zone, a random install ID (part of the password salt), the latest known release and the outcome of the last check for one, and every tool and every model seen so far in the order each first appeared (the order of their chart colors) |
+| `settings` | Time zone, a random install ID (part of the password salt), the latest known release and the outcome of the last check for one, and the tools and models seen so far in the order each first appeared (the order of their chart colors; at most 100 tools and 1,000 models, and at most 20 and 100 new ones per upload) |
 | `users` | Username, dashboard-wide role (admin, viewer or none), password hash, two-factor secret, whether a new password is required, status |
 | `departments` | Name |
 | `department_roles` | Each person's role in a department: manager, viewer or member |
@@ -251,7 +254,8 @@ without a login. Every other path serves the dashboard's pages.
 | `pairing_requests` | Machines waiting to join, and the outcome of each request (with the department and owner picked when approving, and the enrollment key it came with) |
 | `enrollment_keys` | Name, hash of the key, department and owner it gives, who made it, when it expires, how many machines it may add and has added, when it was last used and revoked |
 | `usage_daily` | One row per machine, tool (`source`), day and model: four token counts and the estimated cost (ccusage's) |
-| `model_prices` | Each model's price per million tokens from models.dev, LiteLLM and the admins (`custom`), with the list entry it came from |
+| `model_prices` | Each model's price per million tokens from models.dev, LiteLLM (the price most machines report) and the admins (`custom`), with the list entry it came from |
+| `model_price_reports` | Each machine's prices from models.dev and LiteLLM, and since when it has reported each |
 
 All tables are SQLite `STRICT` tables, created by the migrations in
 [`worker/migrations/`](../worker/migrations/); `ccunified server update`

@@ -47,21 +47,3 @@ export async function refreshLatestVersion(
   if ("version" in result) writes.push(setSetting(db, "latest_version", result.version));
   await db.batch(writes);
 }
-
-/**
- * A machine running a newer release than the dashboard knows of proves that
- * release exists. Remembering it keeps the pages right without waiting up to
- * six hours for the next GitHub check, which stays the authority: it
- * overwrites this value. Only plain releases count, because pre-releases and
- * development builds are never offered as updates.
- */
-export function learnLatestVersion(
-  db: D1Database,
-  settings: Settings,
-  reported: string,
-): D1PreparedStatement | undefined {
-  if (!/^\d+\.\d+\.\d+$/.test(reported)) return undefined;
-  const known = pickLatest(settings.latestVersion, SERVER_VERSION);
-  if (known !== null && (compareVersions(reported, known) ?? 0) <= 0) return undefined;
-  return setSetting(db, "latest_version", reported);
-}

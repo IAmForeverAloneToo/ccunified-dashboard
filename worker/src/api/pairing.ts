@@ -97,6 +97,7 @@ export async function decidePairing(c: Context<AppEnv>): Promise<Response> {
     // Each name is free among active machines and the other waiting ones.
     const taken = await takenNames(
       db,
+      mine.map((r) => r.machine_name),
       mine.map((r) => r.id),
     );
     for (const r of mine) {
@@ -134,7 +135,8 @@ async function findPending(c: Context<AppEnv>, code: string) {
   if (!userCode) fail(400, "invalid_code");
   const req = await c.env.DB.prepare(
     `SELECT id, machine_name FROM pairing_requests
-      WHERE user_code = ?1 AND status = 'pending' AND expires_at > ?2`,
+      WHERE user_code = ?1 AND status = 'pending' AND expires_at > ?2
+        AND enrollment_key_id IS NULL`,
   )
     .bind(userCode, Date.now())
     .first<{ id: string; machine_name: string }>();
@@ -187,10 +189,12 @@ export async function denyPairing(c: Context<AppEnv>): Promise<Response> {
   if (!managesSomething(c.get("user"))) fail(403, "forbidden");
   const body = await readJson(c, z.strictObject({ user_code: z.string().max(32) }));
   const req = await findPending(c, body.user_code);
-  await c.env.DB.prepare(
-    "UPDATE pairing_requests SET status = 'denied', decided_by = ?1, decided_at = ?2 WHERE id = ?3",
+  const res = await c.env.DB.prepare(
+    `UPDATE pairing_requests SET status = 'denied', decided_by = ?1, decided_at = ?2
+      WHERE id = ?3 AND status = 'pending'`,
   )
     .bind(c.get("user").id, Date.now(), req.id)
     .run();
+  if (res.meta.changes !== 1) fail(404, "not_found");
   return c.json({ ok: true });
 }

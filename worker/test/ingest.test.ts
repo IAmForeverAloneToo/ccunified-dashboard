@@ -311,6 +311,29 @@ describe("tools other than Claude Code (format 2)", () => {
     expect(await dashboardTools()).toEqual([...before, "gemini", "qwen"]);
   });
 
+  test("one upload adds at most 20 new tools, and the list stops at 100", async () => {
+    const before = await dashboardTools();
+    const m = await w.createMachine();
+    const sources = Array.from({ length: 30 }, (_, i) => `flood${i}`);
+    const days = sources.map((source) => ({ date: "2026-10-12", source, models: [usage("x")] }));
+    expect((await upload(m.token, v2(sources, days))).status).toBe(200);
+    const after = await dashboardTools();
+    expect(after).toEqual([...before, ...sources.slice(0, 20)]);
+    expect(await machineTools(m.id)).toEqual(sources.slice(0, 20));
+    // The usage of the tools left out is stored all the same.
+    expect(await stored(m.id)).toHaveLength(30);
+
+    const full = Array.from({ length: 100 }, (_, i) => `full${i}`);
+    await w.sql("UPDATE settings SET value = ?1 WHERE key = 'tools'", JSON.stringify(full));
+    await allowNextUpload(m.id);
+    await upload(
+      m.token,
+      v2(["another"], [{ date: "2026-10-12", source: "another", models: [usage("x")] }]),
+    );
+    expect(await dashboardTools()).toEqual(full);
+    await w.sql("UPDATE settings SET value = ?1 WHERE key = 'tools'", JSON.stringify(after));
+  });
+
   test("format 2 rules are enforced", async () => {
     const m = await w.createMachine();
     const refused = async (body: unknown) => {
@@ -438,6 +461,39 @@ describe("models in the order they first appeared", () => {
     const distinct = await w.sql("SELECT DISTINCT model FROM usage_daily");
     expect(models.sort()).toEqual(distinct.map((r) => String(r.model)).sort());
   });
+
+  test("one upload adds at most 100 new models, and the list stops at 1000", async () => {
+    const before = await dashboardModels();
+    const m = await w.createMachine();
+    const days = ["2026-09-10", "2026-09-11", "2026-09-12"].map((date, d) => ({
+      date,
+      source: "claude",
+      models: Array.from({ length: 50 }, (_, i) => usage(`flood-${d * 50 + i}`)),
+    }));
+    const res = await upload(
+      m.token,
+      payload({ range: { from: "2026-09-10", to: "2026-09-12" }, days }),
+    );
+    expect(res.status).toBe(200);
+    const after = await dashboardModels();
+    expect(after).toEqual([...before, ...Array.from({ length: 100 }, (_, i) => `flood-${i}`)]);
+    // The usage of the models left out is stored all the same.
+    const [stored] = await w.sql(
+      "SELECT COUNT(DISTINCT model) AS n FROM usage_daily WHERE machine_id = ?1",
+      m.id,
+    );
+    expect(stored?.n).toBe(150);
+
+    const full = Array.from({ length: 1000 }, (_, i) => `full-${i}`);
+    await w.sql("UPDATE settings SET value = ?1 WHERE key = 'models'", JSON.stringify(full));
+    await allowNextUpload(m.id);
+    await upload(
+      m.token,
+      payload({ days: [{ date: "2026-10-12", source: "claude", models: [usage("one-more")] }] }),
+    );
+    expect(await dashboardModels()).toEqual(full);
+    await w.sql("UPDATE settings SET value = ?1 WHERE key = 'models'", JSON.stringify(after));
+  });
 });
 
 describe("refusals", () => {
@@ -487,44 +543,35 @@ describe("refusals", () => {
   });
 });
 
-describe("learning about new releases from machines", () => {
+describe("the newest release", () => {
   const known = async () => {
     const [row] = await w.sql("SELECT value FROM settings WHERE key = 'latest_version'");
     return (row?.value as string | undefined) ?? null;
   };
   const withVersion = (version: string) => payload({ agent: { ...payload().agent, version } });
 
-  test("a machine on a newer release raises the latest known version", async () => {
-    await w.sql("DELETE FROM settings WHERE key = 'latest_version'");
+  test("comes from the dashboard's own check, never from what a machine reports", async () => {
+    await w.sql(
+      "INSERT INTO settings (key, value) VALUES ('latest_version', '0.9.1') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    );
     const viewer = await w.createUser();
-    const fresh = await w.createMachine({ name: "fresh" });
-    const res = await upload(fresh.token, withVersion("0.9.1"));
+    const bold = await w.createMachine({ name: "bold" });
+    const res = await upload(bold.token, withVersion("99.0.0"));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ latest_version: "0.9.1" });
     expect(await known()).toBe("0.9.1");
 
-    // A machine on an older release doesn't lower it, and is told to update.
+    // A machine on an older release is told to update.
     const behind = await w.createMachine({ name: "behind" });
     expect(await (await upload(behind.token, withVersion("0.8.0"))).json()).toMatchObject({
       latest_version: "0.9.1",
     });
-    expect(await known()).toBe("0.9.1");
     const list = (await (await w.fetch("/api/machines", { cookie: viewer.cookie })).json()) as {
       latest_version: string;
       machines: { name: string; update_available: boolean }[];
     };
     expect(list.latest_version).toBe("0.9.1");
     expect(list.machines.find((m) => m.name === "behind")?.update_available).toBe(true);
-    expect(list.machines.find((m) => m.name === "fresh")?.update_available).toBe(false);
-  });
-
-  test("pre-releases and development builds don't count", async () => {
-    await w.sql("DELETE FROM settings WHERE key = 'latest_version'");
-    const m = await w.createMachine();
-    for (const version of ["9.0.0-rc.1", "0.0.0-ci.42", "9.0.0+build.7", "dev"]) {
-      await allowNextUpload(m.id);
-      expect((await upload(m.token, withVersion(version))).status).toBe(200);
-    }
-    expect(await known()).toBeNull();
+    expect(list.machines.find((m) => m.name === "bold")?.update_available).toBe(false);
   });
 });

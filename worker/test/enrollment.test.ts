@@ -281,3 +281,179 @@ describe("approving enrolled machines", () => {
     expect((await poll(req.device_code)).status).toBe("expired");
   });
 });
+
+/** Adds `n` machines waiting with a key, straight into the database. */
+async function waitingWith(keyId: string, n: number, tag: string) {
+  const now = Date.now();
+  await w.sql(
+    `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
+       agent_version, sync_interval_minutes, created_at, expires_at, status, enrollment_key_id)
+     SELECT ?1 || value, ?1 || value, 'AAAA-BBBB', ?1 || value, 'linux', 'amd64', '0.7.0', 30,
+            ?2, ?3, 'pending', ?4
+       FROM json_each(?5)`,
+    tag,
+    now,
+    now + 24 * 60 * 60 * 1000,
+    keyId,
+    JSON.stringify(Array.from({ length: n }, (_, i) => i)),
+  );
+}
+
+const startWithCode = (name: string, ip: string) =>
+  w.fetch(
+    "/agent/pair/start",
+    jsonInit(
+      "POST",
+      {
+        machine_name: name,
+        os: "linux",
+        arch: "amd64",
+        agent_version: "0.7.0",
+        sync_interval_minutes: 30,
+      },
+      { headers: { "cf-connecting-ip": ip } },
+    ),
+  );
+
+describe("limits on enrolling", () => {
+  test("machines waiting with a key leave the places for machines showing a code", async () => {
+    const { id } = await newKey(admin);
+    await waitingWith(id, 25, "crowd-");
+    expect((await startWithCode("needs-a-code", "192.0.2.80")).status).toBe(200);
+    await w.sql("UPDATE pairing_requests SET status = 'denied' WHERE enrollment_key_id = ?1", id);
+  });
+
+  test("at most 1000 machines wait with one key", async () => {
+    const full = await newKey(admin);
+    await waitingWith(full.id, 1000, "full-");
+    expect(await (await enroll(full.key, "one-too-many")).json()).toEqual({
+      error: "too_many_pending",
+    });
+    const other = await newKey(admin);
+    expect((await enroll(other.key, "other-key")).status).toBe(200);
+    await w.sql(
+      "UPDATE pairing_requests SET status = 'denied' WHERE enrollment_key_id = ?1",
+      full.id,
+    );
+  });
+
+  test("at most 120 machines enroll with one key in 10 minutes, even all at once", async () => {
+    const { id, key } = await newKey(admin);
+    const results = await Promise.all(
+      Array.from({ length: 130 }, (_, i) => enroll(key, `burst-${i}`)),
+    );
+    const statuses = results.map((r) => r.status);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(120);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(10);
+    expect((await send(admin, "DELETE", `/api/enrollment-keys/${id}`)).status).toBe(200);
+  });
+
+  test("a long name in use gets a number that fits", async () => {
+    const { key } = await newKey(admin);
+    const long = `${"x".repeat(60)}-box`;
+    await w.createMachine({ name: long });
+    const second = (await enrolled(key, long)).machine_name;
+    expect(second).toBe(`${"x".repeat(60)}-b-2`);
+    expect((await enrolled(key, long)).machine_name).toBe(`${"x".repeat(60)}-b-3`);
+    // Names are matched without regard to case.
+    expect((await enrolled(key, long.toUpperCase())).machine_name).toBe(`${"X".repeat(60)}-B-4`);
+  });
+
+  test("an enrolled machine can't be approved or denied by its hidden code", async () => {
+    const { key } = await newKey(admin);
+    await enrolled(key, "hidden-code");
+    const [row] = await w.sql(
+      "SELECT user_code FROM pairing_requests WHERE machine_name = 'hidden-code'",
+    );
+    const user_code = String(row?.user_code);
+    expect((await send(admin, "POST", "/api/pairing/approve", { user_code })).status).toBe(404);
+    expect((await send(admin, "POST", "/api/pairing/deny", { user_code })).status).toBe(404);
+  });
+});
+
+describe("departments, owners and collecting the key", () => {
+  test("deleting a department denies the machines waiting with its keys", async () => {
+    const temp = await w.createDepartment("Temporary");
+    const { key } = await newKey(admin, { department_id: temp });
+    const req = await enrolled(key, "temp-laptop");
+    const code = await startWithCode("code-laptop", "192.0.2.81");
+    const { device_code } = (await code.json()) as { device_code: string };
+    expect((await send(admin, "DELETE", `/api/departments/${temp}`)).status).toBe(200);
+    expect((await poll(req.device_code)).status).toBe("denied");
+    // Machines showing a code aren't touched.
+    expect((await poll(device_code)).status).toBe("pending");
+  });
+
+  test("an owner who left the department doesn't own the machine; admins still do", async () => {
+    const leaving = await w.createUser({ role: null, departments: [{ id: eng, role: "member" }] });
+    const boss = await w.createUser({ role: "admin" });
+    const a = await enrolled(
+      (await newKey(admin, { department_id: eng, owner_id: leaving.id })).key,
+      "left-behind",
+    );
+    const b = await enrolled(
+      (await newKey(admin, { department_id: eng, owner_id: boss.id })).key,
+      "boss-box",
+    );
+    const res = await send(admin, "POST", "/api/pairing/decide", {
+      ids: [await idOf("left-behind"), await idOf("boss-box")],
+      approve: true,
+    });
+    expect(res.status).toBe(200);
+    await w.sql("DELETE FROM department_roles WHERE user_id = ?1", leaving.id);
+    const owner = async (deviceCode: string) => {
+      const p = await poll(deviceCode);
+      expect(p.status).toBe("approved");
+      const [m] = await w.sql("SELECT owner_id FROM machines WHERE id = ?1", p.machine?.id);
+      return m?.owner_id;
+    };
+    expect(await owner(a.device_code)).toBeNull();
+    expect(await owner(b.device_code)).toBe(boss.id);
+  });
+
+  test("if adding the machine fails, the key can be collected again", async () => {
+    const { key } = await newKey(admin);
+    const req = await enrolled(key, "flaky");
+    await send(admin, "POST", "/api/pairing/decide", { ids: [await idOf("flaky")], approve: true });
+    await w.sql(
+      "CREATE TRIGGER no_machines BEFORE INSERT ON machines BEGIN SELECT RAISE(ABORT, 'full'); END",
+    );
+    const failed = await w.fetch(
+      "/agent/pair/poll",
+      jsonInit("POST", { device_code: req.device_code }),
+    );
+    expect(failed.status).toBe(500);
+    await w.sql("DROP TRIGGER no_machines");
+    const [row] = await w.sql("SELECT status FROM pairing_requests WHERE machine_name = 'flaky'");
+    expect(row?.status).toBe("approved");
+    const p = await poll(req.device_code);
+    expect(p.status).toBe("approved");
+    expect(p.token).toMatch(/^ccu_m_/);
+    // Exactly once.
+    expect((await poll(req.device_code)).status).toBe("expired");
+  });
+
+  test("old requests are forgotten when machines enroll", async () => {
+    const { key } = await newKey(admin);
+    const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const recent = Date.now() - 24 * 60 * 60 * 1000;
+    const add = (id: string, status: string, decidedAt: number) =>
+      w.sql(
+        `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch,
+           agent_version, sync_interval_minutes, created_at, expires_at, status, decided_at)
+         VALUES (?1, ?1, 'AAAA-BBBB', ?1, 'linux', 'amd64', '0.7.0', 30, ?2, ?3, ?4, ?2)`,
+        id,
+        decidedAt,
+        decidedAt + 10 * 60 * 1000,
+        status,
+      );
+    await add("old-claimed", "claimed", old);
+    await add("old-approved", "approved", old);
+    await add("recent-claimed", "claimed", recent);
+    await enrolled(key, "sweeper");
+    const left = await w.sql(
+      "SELECT id FROM pairing_requests WHERE id IN ('old-claimed', 'old-approved', 'recent-claimed')",
+    );
+    expect(left).toEqual([{ id: "recent-claimed" }]);
+  });
+});

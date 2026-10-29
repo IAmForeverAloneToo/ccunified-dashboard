@@ -70,6 +70,79 @@ export async function effectivePrices(
   return out;
 }
 
+/**
+ * Sets the list prices of `models` (models.dev and LiteLLM) to the ones most
+ * machines agree on, from what each machine reported: one machine can't
+ * change a price that others report differently. A tie goes to the price
+ * reported first. A list price no machine reports any more is removed. The
+ * first two statements' changes count the prices that changed; the third
+ * only brings the list entries up to date.
+ */
+export function settleListPrices(
+  db: D1Database,
+  models: string[],
+  now = Date.now(),
+): D1PreparedStatement[] {
+  const list = JSON.stringify([...new Set(models)]);
+  return [
+    db
+      .prepare(
+        `WITH votes AS (
+           SELECT model, source, input, output, cache_write, cache_read, MIN(entry) AS entry,
+                  COUNT(*) AS machines, MIN(reported_at) AS since
+             FROM model_price_reports
+            WHERE model IN (SELECT value FROM json_each(?1))
+            GROUP BY model, source, input, output, cache_write, cache_read
+         ), ranked AS (
+           SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY model, source
+                    ORDER BY machines DESC, since, input, output, cache_write, cache_read
+                  ) AS rank
+             FROM votes
+         )
+         INSERT INTO model_prices (model, source, input, output, cache_write, cache_read, entry, updated_at)
+         SELECT model, source, input, output, cache_write, cache_read, entry, ?2
+           FROM ranked WHERE rank = 1
+         ON CONFLICT (model, source) DO UPDATE SET
+                input = excluded.input, output = excluded.output,
+                cache_write = excluded.cache_write, cache_read = excluded.cache_read,
+                entry = excluded.entry, updated_at = excluded.updated_at
+          WHERE model_prices.input IS NOT excluded.input
+             OR model_prices.output IS NOT excluded.output
+             OR model_prices.cache_write IS NOT excluded.cache_write
+             OR model_prices.cache_read IS NOT excluded.cache_read`,
+      )
+      .bind(list, now),
+    db
+      .prepare(
+        `DELETE FROM model_prices
+          WHERE source IN ('models.dev', 'litellm')
+            AND model IN (SELECT value FROM json_each(?1))
+            AND NOT EXISTS (SELECT 1 FROM model_price_reports r
+                             WHERE r.model = model_prices.model AND r.source = model_prices.source)`,
+      )
+      .bind(list),
+    // The list entry a price came from can change while the price doesn't.
+    db
+      .prepare(
+        `UPDATE model_prices
+            SET entry = (SELECT MIN(r.entry) FROM model_price_reports r
+                          WHERE r.model = model_prices.model AND r.source = model_prices.source
+                            AND r.input = model_prices.input AND r.output = model_prices.output
+                            AND r.cache_write = model_prices.cache_write
+                            AND r.cache_read = model_prices.cache_read)
+          WHERE source IN ('models.dev', 'litellm')
+            AND model IN (SELECT value FROM json_each(?1))
+            AND entry IS NOT (SELECT MIN(r.entry) FROM model_price_reports r
+                               WHERE r.model = model_prices.model AND r.source = model_prices.source
+                                 AND r.input = model_prices.input AND r.output = model_prices.output
+                                 AND r.cache_write = model_prices.cache_write
+                                 AND r.cache_read = model_prices.cache_read)`,
+      )
+      .bind(list),
+  ];
+}
+
 /** The cost of some tokens at a price. */
 export function costAt(
   p: Price,
