@@ -33,7 +33,7 @@ import {
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
 import { familySeries, modelFamily } from "../lib/models";
 import { type Choice, type MultiSelect, multiSelect } from "../lib/multiselect";
-import { seriesOf, stableSeries } from "../lib/series";
+import { OTHER, seriesOf, stableSeries } from "../lib/series";
 import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
 
@@ -127,7 +127,7 @@ export function machineSeries(machines: Machine[]): Map<string, Series> {
     .filter((m) => m.removed_at === null)
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
   const fold = ordered.length > 8;
-  const other: Series = { id: "other", label: "Other machines", colorClass: "s-other" };
+  const other: Series = { id: OTHER, label: "Other machines", colorClass: "s-other" };
   const removed: Series = fold
     ? other
     : { id: REMOVED, label: "Removed machines", colorClass: "s-other" };
@@ -747,13 +747,13 @@ export async function overviewPage(ctx: PageContext) {
   } {
     if (state.split === "machine") {
       const map = machineSeries(machines);
-      const seen = new Set(s.by_day_machine.map((r) => map.get(r.machine_id)?.id ?? "other"));
+      const seen = new Set(s.by_day_machine.map((r) => map.get(r.machine_id)?.id ?? OTHER));
       const all = [...new Map([...map.values()].map((sr) => [sr.id, sr])).values()];
       const series = all.filter((sr) => seen.has(sr.id));
-      if (seen.has("other") && !series.some((sr) => sr.id === "other")) {
-        series.push({ id: "other", label: "Other machines", colorClass: "s-other" });
+      if (seen.has(OTHER) && !series.some((sr) => sr.id === OTHER)) {
+        series.push({ id: OTHER, label: "Other machines", colorClass: "s-other" });
       }
-      return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? "other" };
+      return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? OTHER };
     }
     if (state.split === "department") {
       const seen = s.by_day_machine.map((r) => departmentOf(r.machine_id));
@@ -765,7 +765,7 @@ export async function overviewPage(ctx: PageContext) {
       );
       return {
         series: seriesOf(map, seen),
-        keyOf: (r) => map.get(departmentOf(String(r.machine_id)))?.id ?? "other",
+        keyOf: (r) => map.get(departmentOf(String(r.machine_id)))?.id ?? OTHER,
       };
     }
     if (state.split === "tool") {
@@ -773,7 +773,7 @@ export async function overviewPage(ctx: PageContext) {
       const map = toolSeries(s.tools, sources);
       return {
         series: seriesOf(map, sources),
-        keyOf: (r) => map.get(String(r.source))?.id ?? "other",
+        keyOf: (r) => map.get(String(r.source))?.id ?? OTHER,
       };
     }
     const models = s.by_day_model.map((r) => r.model);
@@ -781,7 +781,7 @@ export async function overviewPage(ctx: PageContext) {
     const familyOf = (model: string) => modelFamily(model).id;
     return {
       series: seriesOf(map, models.map(familyOf)),
-      keyOf: (r) => map.get(familyOf(String(r.model)))?.id ?? "other",
+      keyOf: (r) => map.get(familyOf(String(r.model)))?.id ?? OTHER,
     };
   }
 
@@ -1063,7 +1063,7 @@ export async function overviewPage(ctx: PageContext) {
           const sr = map.get(id);
           return {
             // Folded tools still get their own row, under their own name.
-            label: sr?.id === "other" ? toolName(id) : (sr?.label ?? toolName(id)),
+            label: sr?.id === OTHER ? toolName(id) : (sr?.label ?? toolName(id)),
             colorClass: state.split === "tool" ? sr?.colorClass : undefined,
             totals,
           };

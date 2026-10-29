@@ -172,20 +172,54 @@ export async function approvePage(ctx: PageContext) {
   const selected = new Set<string>();
   let enrolled: PairingRequest[] = [];
 
+  // While machines are being approved or denied: no second click, no redraws.
+  let busy = false;
+
   async function decideMany(ids: string[], approve: boolean) {
-    if (ids.length === 0) return;
-    const res = await api<{ decided: number }>("/pairing/decide", {
-      method: "POST",
-      body: { ids, approve },
-    });
-    const n = res.decided;
-    toast(
-      approve
-        ? `Approved ${n} machine${n === 1 ? "" : "s"}. ${n === 1 ? "It starts" : "They start"} uploading at ${n === 1 ? "its" : "their"} next sync.`
-        : `Denied ${n} machine${n === 1 ? "" : "s"}`,
-    );
-    for (const id of ids) selected.delete(id);
-    await loadPending();
+    if (ids.length === 0 || busy) return;
+    busy = true;
+    drawEnrolled();
+    const machines = (n: number) => `${n} machine${n === 1 ? "" : "s"}`;
+    const verb = approve ? "Approved" : "Denied";
+    // In batches the server accepts (it takes up to 500 ids, in a small body).
+    const BATCH = 200;
+    let decided = 0;
+    let failed = false;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      if (ids.length > BATCH) {
+        toast(`${approve ? "Approving" : "Denying"}… ${i} of ${ids.length} done`);
+      }
+      const batch = ids.slice(i, i + BATCH);
+      try {
+        const res = await api<{ decided: number }>("/pairing/decide", {
+          method: "POST",
+          body: { ids: batch, approve },
+        });
+        decided += res.decided;
+      } catch (e) {
+        // not_found: none of these were still waiting (decided elsewhere, or expired).
+        if (!(e instanceof ApiError && e.code === "not_found")) {
+          failed = true;
+          break;
+        }
+      }
+      for (const id of batch) selected.delete(id);
+    }
+    if (failed) {
+      toast(
+        decided === 0
+          ? `Couldn't ${approve ? "approve" : "deny"} the machines. Try again.`
+          : `${verb} ${machines(decided)}, then something went wrong. The rest are still selected: try again.`,
+      );
+    } else {
+      toast(
+        approve
+          ? `Approved ${machines(decided)}. ${decided === 1 ? "It starts" : "They start"} uploading at ${decided === 1 ? "its" : "their"} next sync.`
+          : `Denied ${machines(decided)}`,
+      );
+    }
+    busy = false;
+    await loadPending().catch(() => drawEnrolled());
     ctx.refreshApprovals();
   }
 
@@ -196,6 +230,7 @@ export async function approvePage(ctx: PageContext) {
       type: "checkbox",
       "aria-label": "Select every machine",
       checked: enrolled.length > 0 && count === enrolled.length,
+      disabled: busy,
       onchange: () => {
         if (all.checked) for (const r of enrolled) selected.add(r.id);
         else selected.clear();
@@ -208,7 +243,7 @@ export async function approvePage(ctx: PageContext) {
       {
         type: "button",
         class: "primary",
-        disabled: count === 0,
+        disabled: busy || count === 0,
         onclick: () => void decideMany([...selected], true),
       },
       count > 0 ? `Approve ${count}` : "Approve",
@@ -218,7 +253,7 @@ export async function approvePage(ctx: PageContext) {
       {
         type: "button",
         class: "danger",
-        disabled: count === 0,
+        disabled: busy || count === 0,
         onclick: () => void decideMany([...selected], false),
       },
       count > 0 ? `Deny ${count}` : "Deny",
@@ -269,6 +304,7 @@ export async function approvePage(ctx: PageContext) {
                       type: "checkbox",
                       "aria-label": `Select ${r.machine_name}`,
                       checked: selected.has(r.id),
+                      disabled: busy,
                       onchange: () => {
                         if (box.checked) selected.add(r.id);
                         else selected.delete(r.id);
@@ -384,7 +420,9 @@ export async function approvePage(ctx: PageContext) {
   code.focus();
   await loadPending();
   const timer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void loadPending().catch(() => undefined);
+    if (document.visibilityState === "visible" && !busy) {
+      void loadPending().catch(() => undefined);
+    }
   }, 5000);
   return () => window.clearInterval(timer);
 }

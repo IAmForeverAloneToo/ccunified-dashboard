@@ -1,7 +1,7 @@
 import "./styles.css";
 import { isAdmin, managesSomething, seesAll } from "./lib/access";
 import { ApiError, api, type Me, onAuthProblem, type PairingRequest } from "./lib/api";
-import { clear, h, toast } from "./lib/dom";
+import { clear, closeDialogs, h, toast } from "./lib/dom";
 import { logo } from "./lib/logo";
 import { accountPage } from "./pages/account";
 import { approvePage } from "./pages/approve";
@@ -224,25 +224,34 @@ function shell(route: Route): HTMLElement {
   return main;
 }
 
+/** Where to go after logging in: a page of this dashboard, or the overview. */
+function nextPath(next: string | null): string {
+  if (!next?.startsWith("/")) return "/";
+  try {
+    // The browser's own reading, so "/\evil.example" or a tab can't lead elsewhere.
+    const url = new URL(next, location.origin);
+    return url.origin === location.origin ? url.pathname + url.search + url.hash : "/";
+  } catch {
+    return "/";
+  }
+}
+
 async function render(): Promise<void> {
   cleanup?.();
   cleanup = undefined;
+  // A dialog belongs to the page it was opened on (and may show a secret).
+  closeDialogs();
   const path = location.pathname;
   const query = new URLSearchParams(location.search);
 
   if (path === "/login") {
     me = null;
     window.clearInterval(approvalsTimer);
+    approvalsTimer = undefined;
     document.title = "Log in · ccunified";
     cleanup = loginPage(root, query, (user) => {
       me = null; // read in full from /api/me
-      const next = query.get("next");
-      const target = user.must_change_password
-        ? "/change-password"
-        : next?.startsWith("/") && !next.startsWith("//")
-          ? next
-          : "/";
-      navigate(target, true);
+      navigate(user.must_change_password ? "/change-password" : nextPath(query.get("next")), true);
     });
     return;
   }

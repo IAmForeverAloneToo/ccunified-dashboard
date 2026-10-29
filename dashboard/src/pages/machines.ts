@@ -127,6 +127,9 @@ export async function machinesPage(ctx: PageContext) {
     draw();
   });
 
+  // The "Add many machines" card, for admins and managers.
+  let keys: ReturnType<typeof enrollmentCard> | undefined;
+
   async function load() {
     const [m, summary, deps] = await Promise.all([
       api<MachinesResponse>("/machines"),
@@ -144,12 +147,13 @@ export async function machinesPage(ctx: PageContext) {
     if (!addSlot.hasChildNodes()) {
       addSlot.append(addMachineCard(m.source_repo, managesSomething(ctx.me)));
       if (managesSomething(ctx.me)) {
-        const keys = enrollmentCard(ctx.me, m.source_repo, deps.departments);
+        keys = enrollmentCard(ctx.me, m.source_repo, () => data?.departments ?? []);
         addSlot.append(keys.element);
-        await keys.load();
       }
     }
     draw();
+    // The keys' uses and waiting machines change as machines enroll.
+    await keys?.load();
   }
 
   const STATUS_ORDER: Record<Machine["status"], number> = { late: 0, never: 1, ok: 2, revoked: 3 };
@@ -415,7 +419,13 @@ export async function machinesPage(ctx: PageContext) {
   /** Rename, move to another department, or pick an owner. */
   async function edit(machine: Machine) {
     const departments = (data?.departments ?? []).filter((d) => admin || d.my_role === "manager");
-    const { users } = await api<{ users: User[] }>("/users");
+    let users: User[];
+    try {
+      ({ users } = await api<{ users: User[] }>("/users"));
+    } catch {
+      toast("Couldn't load the people who can own it. Try again.");
+      return;
+    }
     const name = h("input", { value: machine.name, maxLength: 64, required: true });
     const department = h(
       "select",
@@ -425,13 +435,23 @@ export async function machinesPage(ctx: PageContext) {
     );
     department.value = machine.department?.id ?? "";
     const owner = h("select");
+    // Changed only when someone picks another owner: a manager's list of
+    // people leaves out admins, who may own the machine.
+    let ownerPicked = false;
+    owner.addEventListener("change", () => {
+      ownerPicked = true;
+    });
     const fillOwners = () => {
-      const keep = owner.value || machine.owner?.id || "";
+      const keep = owner.value;
       const dep = department.value;
       // People with a role in the department, and admins (who can own any machine).
-      const people = users.filter(
+      const people: { id: string; username: string }[] = users.filter(
         (u) => dep === "" || u.role === "admin" || u.departments.some((d) => d.id === dep),
       );
+      // Its owner is always offered, even if not in the list.
+      if (machine.owner && !people.some((u) => u.id === machine.owner?.id)) {
+        people.push(machine.owner);
+      }
       owner.replaceChildren(
         h("option", { value: "" }, "Nobody: a shared machine"),
         ...people.map((u) => h("option", { value: u.id }, u.username)),
@@ -440,6 +460,7 @@ export async function machinesPage(ctx: PageContext) {
     };
     department.addEventListener("change", fillOwners);
     fillOwners();
+    owner.value = machine.owner?.id ?? "";
     const error = h("p", { class: "field-error", role: "alert" });
     await openDialog((close) => {
       const form = h(
@@ -474,7 +495,9 @@ export async function machinesPage(ctx: PageContext) {
         if (department.value !== (machine.department?.id ?? "")) {
           body.department_id = department.value || null;
         }
-        if (owner.value !== (machine.owner?.id ?? "")) body.owner_id = owner.value || null;
+        if (ownerPicked && owner.value !== (machine.owner?.id ?? "")) {
+          body.owner_id = owner.value || null;
+        }
         if (Object.keys(body).length === 0) {
           close();
           return;
@@ -483,7 +506,7 @@ export async function machinesPage(ctx: PageContext) {
           await api(`/machines/${encodeURIComponent(machine.id)}`, { method: "PATCH", body });
           close("ok");
           toast(`Saved ${name.value.trim()}`);
-          await load();
+          await refresh();
         } catch (e) {
           error.textContent =
             e instanceof ApiError && e.code === "name_taken"
@@ -519,9 +542,14 @@ export async function machinesPage(ctx: PageContext) {
       danger: true,
     });
     if (!ok) return;
-    await api(`/machines/${encodeURIComponent(machine.id)}/revoke`, { method: "POST" });
+    try {
+      await api(`/machines/${encodeURIComponent(machine.id)}/revoke`, { method: "POST" });
+    } catch {
+      toast(`Couldn't revoke ${machine.name}. Try again.`);
+      return;
+    }
     toast(`${machine.name} revoked`);
-    await load();
+    await refresh();
   }
 
   async function remove(machine: Machine) {
@@ -571,18 +599,28 @@ export async function machinesPage(ctx: PageContext) {
       return form;
     });
     if (answer !== "keep" && answer !== "delete") return;
-    await api(`/machines/${encodeURIComponent(machine.id)}?usage=${answer}`, { method: "DELETE" });
+    try {
+      await api(`/machines/${encodeURIComponent(machine.id)}?usage=${answer}`, {
+        method: "DELETE",
+      });
+    } catch {
+      toast(`Couldn't remove ${machine.name}. Try again.`);
+      return;
+    }
     toast(
       answer === "keep"
         ? `${machine.name} removed; its usage was kept`
         : `${machine.name} and its usage removed`,
     );
-    await load();
+    await refresh();
   }
+
+  /** Reloads the lists; if that fails, the next refresh tries again. */
+  const refresh = () => load().catch(() => undefined);
 
   await load();
   const timer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void load().catch(() => undefined);
+    if (document.visibilityState === "visible") void refresh();
   }, 60_000);
   return () => window.clearInterval(timer);
 }

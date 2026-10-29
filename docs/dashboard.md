@@ -195,9 +195,11 @@ are explained in [Add machines](adding-machines.md#machine-status).
 
 Admins and managers also see **Add many machines**: the enrollment keys they
 manage, with how many machines each added, how many wait for approval, when it
-stops working and when it was last used, and a button to **Revoke** it.
-**Create an enrollment key** to add machines from a script; see
-[Add many machines](adding-machines.md#add-many-machines-with-a-script).
+stops working and when it was last used, and a button to **Revoke** it; the
+list refreshes every minute. **Create an enrollment key** to add machines from
+a script; see [Add many machines](adding-machines.md#add-many-machines-with-a-script).
+The new key is shown only once, so its window stays open (Escape doesn't close
+it) until you click **Done**. Recovery codes for two-factor work the same way.
 
 ## Approvals (admins and managers)
 
@@ -209,7 +211,9 @@ department out. Only admins see the list of machines waiting with a code.
 Machines that joined with an enrollment key are listed under **Joined with an
 enrollment key**, with the department and owner they get from the key. Tick
 some (or tick the header to pick them all) and **Approve** or **Deny** them
-together. Managers see those of the departments they manage. The badge on
+together; hundreds go in batches of 200, and if a batch fails, the message says
+how many were done and the rest stay ticked to try again. Managers see those of
+the departments they manage. The badge on
 **Approvals** counts every machine waiting that you can approve.
 
 ## Departments (admins)

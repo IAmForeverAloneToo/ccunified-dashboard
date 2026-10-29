@@ -47,7 +47,8 @@ export function enrollCommands(repo: string, key: string): HTMLElement[] {
 export function enrollmentCard(
   me: Me,
   repo: string,
-  departments: Department[],
+  /** The departments, as of the page's latest refresh. */
+  departments: () => Department[],
 ): { element: HTMLElement; load: () => Promise<void> } {
   const admin = isAdmin(me);
   const list = h("div");
@@ -187,14 +188,29 @@ export function enrollmentCard(
       danger: true,
     });
     if (!ok) return;
-    await api(`/enrollment-keys/${encodeURIComponent(k.id)}`, { method: "DELETE" });
+    try {
+      await api(`/enrollment-keys/${encodeURIComponent(k.id)}`, { method: "DELETE" });
+    } catch {
+      toast(`Couldn't revoke “${k.name}”. Try again.`);
+      return;
+    }
     toast(`Revoked “${k.name}”`);
-    await load();
+    await refresh();
   }
 
+  /** Reloads the list; if that fails, the page's next refresh tries again. */
+  const refresh = () => load().catch(() => undefined);
+
   async function create() {
-    const own = admin ? departments : departments.filter((d) => d.my_role === "manager");
-    const { users } = await api<{ users: User[] }>("/users");
+    const all = departments();
+    const own = admin ? all : all.filter((d) => d.my_role === "manager");
+    let users: User[];
+    try {
+      ({ users } = await api<{ users: User[] }>("/users"));
+    } catch {
+      toast("Couldn't reach the dashboard. Try again.");
+      return;
+    }
     const name = h("input", { maxLength: 64, required: true, placeholder: "Engineering laptops" });
     const department = h(
       "select",
@@ -314,8 +330,8 @@ export function enrollmentCard(
     });
     if (!created) return;
     const { key, name: keyName } = created;
-    await load();
-    await openDialog(
+    // The key first, so a failing reload can't hide it; only Done closes it.
+    const shown = openDialog(
       (close) => [
         h("h2", null, `Enrollment key “${keyName}”`),
         h(
@@ -336,8 +352,10 @@ export function enrollmentCard(
           h("button", { type: "button", class: "primary", onclick: () => close() }, "Done"),
         ),
       ],
-      { wide: true },
+      { wide: true, keepOpen: () => true },
     );
+    await refresh();
+    await shown;
   }
 
   return { element, load };

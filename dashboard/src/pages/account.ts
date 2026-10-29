@@ -74,6 +74,11 @@ function recoveryCodesView(codes: string[]): Child[] {
   ];
 }
 
+/** Recovery codes are shown once: once they're up, only Done closes the dialog. */
+const keepCodes = {
+  keepOpen: (dialog: HTMLDialogElement) => dialog.querySelector(".codes") !== null,
+};
+
 export async function accountPage(ctx: PageContext) {
   const twoFactor = h("section", { class: "card stack", "aria-labelledby": "tf-title" });
 
@@ -166,7 +171,7 @@ export async function accountPage(ctx: PageContext) {
       });
       queueMicrotask(() => pw.focus());
       return form;
-    });
+    }, keepCodes);
     await ctx.refreshMe();
     await drawTwoFactor();
   }
