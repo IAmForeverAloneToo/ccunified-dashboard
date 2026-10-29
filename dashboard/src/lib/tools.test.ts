@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import toolsGo from "../../../agent/internal/ccusage/tools.go?raw";
+import { OTHER, seriesOf } from "./series";
 import { TOOL_NAMES, toolList, toolName, toolSeries } from "./tools";
 
 describe("tools", () => {
@@ -33,11 +34,22 @@ describe("tools", () => {
     const series = toolSeries(ids, ids);
     expect(series.get(ids[6] ?? "")?.colorClass).toBe("s7");
     expect(series.get(ids[7] ?? "")).toEqual({
-      id: "other",
+      id: OTHER,
       label: "Other tools",
       colorClass: "s-other",
     });
-    expect(series.get(ids[8] ?? "")?.id).toBe("other");
+    expect(series.get(ids[8] ?? "")?.id).toBe(OTHER);
+  });
+
+  test("a tool called other stays apart from Other tools", () => {
+    const ids = ["other", ...Object.keys(TOOL_NAMES).slice(0, 8)];
+    const series = toolSeries(ids, ids);
+    expect(series.get("other")).toEqual({ id: "other", label: "other", colorClass: "s1" });
+    expect(seriesOf(series, ids).map((s) => s.label)).toEqual([
+      "other",
+      ...ids.slice(1, 7).map(toolName),
+      "Other tools",
+    ]);
   });
 
   test("a machine's tools are listed in the dashboard's order", () => {

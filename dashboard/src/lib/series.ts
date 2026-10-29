@@ -1,6 +1,12 @@
 import type { Series } from "./chart";
 
 /**
+ * The id of the gray series that the rest fold into. No tool, model family,
+ * department or machine can have it: none of their ids contain a NUL.
+ */
+export const OTHER = "\u0000other";
+
+/**
  * Chart series that keep their colors. Ids get colors in the order given,
  * usually the order the dashboard first saw them, so a new id never repaints
  * the others; ids that appear but aren't in the order come after, by name.
@@ -8,7 +14,7 @@ import type { Series } from "./chart";
  * There are eight colors. Past eight ids overall, an id beyond the eighth that
  * is shown (in `seen`) takes a color no other shown id uses, as long as at
  * most eight are shown; only when more than eight are shown do the newest
- * fold into one gray series, `other`.
+ * fold into one gray series, `OTHER`.
  */
 export function stableSeries(
   order: string[],
@@ -24,7 +30,7 @@ export function stableSeries(
     label: label(id),
     colorClass: `s${slot + 1}`,
   });
-  const folded: Series = { id: "other", label: other, colorClass: "s-other" };
+  const folded: Series = { id: OTHER, label: other, colorClass: "s-other" };
   const map = new Map<string, Series>();
   const shown = all.filter((id) => shownSet.has(id));
   if (all.length <= 8 || shown.length <= 8) {
@@ -46,7 +52,7 @@ export function stableSeries(
 
 /** The series the given keys map to, once each, in color order. */
 export function seriesOf(map: Map<string, Series>, keys: Iterable<string>): Series[] {
-  const wanted = new Set([...keys].map((k) => map.get(k)?.id ?? "other"));
+  const wanted = new Set([...keys].map((k) => map.get(k)?.id ?? OTHER));
   const unique = new Map([...map.values()].map((s) => [s.id, s]));
   return [...unique.values()].filter((s) => wanted.has(s.id));
 }

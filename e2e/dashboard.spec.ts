@@ -1104,6 +1104,71 @@ test.describe("access control", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
     await expect(machine("Build server").locator("td").nth(1)).toHaveText("Shared");
   });
+
+  test("a manager renaming a machine an admin owns keeps its owner", async ({ page }) => {
+    // Managers don't see admins in their list of people.
+    await demo.db
+      .prepare(
+        "UPDATE machines SET owner_id = (SELECT id FROM users WHERE username = 'demo') WHERE name = 'Build server'",
+      )
+      .run();
+    try {
+      await logIn(page, "morgan");
+      await page.goto(new URL("/machines", demo.url).href);
+      const machine = (name: string) => page.locator("tbody tr").filter({ hasText: name });
+      await expect(machine("Build server").locator("td").nth(1)).toHaveText("demo");
+      await machine("Build server").getByRole("button", { name: "Edit" }).click();
+      const edit = page.getByRole("dialog");
+      await expect(edit.getByLabel("Owner").locator("option:checked")).toHaveText("demo");
+      await edit.getByLabel("Name").fill("Build server 2");
+      await edit.getByRole("button", { name: "Save" }).click();
+      await expect(edit).toHaveCount(0);
+      await expect(machine("Build server 2").locator("td").nth(1)).toHaveText("demo");
+      const row = await demo.db
+        .prepare(
+          "SELECT u.username FROM machines m JOIN users u ON u.id = m.owner_id WHERE m.name = 'Build server 2'",
+        )
+        .first();
+      expect(row).toEqual({ username: "demo" });
+    } finally {
+      await demo.db
+        .prepare(
+          "UPDATE machines SET name = 'Build server', owner_id = NULL WHERE name IN ('Build server', 'Build server 2')",
+        )
+        .run();
+    }
+  });
+});
+
+test("logging in: a dropped request can be retried, and next= stays on the dashboard", async ({
+  page,
+}) => {
+  const logInTo = async (next: string) => {
+    await page.goto(new URL(`/login?next=${next}`, demo.url).href);
+    await page.getByLabel("Username").fill("demo");
+    await page.getByLabel("Password").fill("demo-password");
+    await page.getByRole("button", { name: "Log in" }).click();
+  };
+  // The first request for the login parameters fails, as on a dropped connection.
+  let dropped = false;
+  await page.route("**/api/login-params", (route) => {
+    if (dropped) return route.continue();
+    dropped = true;
+    return route.abort();
+  });
+  await logInTo("/%5Cevil.example");
+  await expect(page.getByText("Couldn't reach the dashboard")).toBeVisible();
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  expect(page.url()).toBe(new URL("/", demo.url).href);
+
+  await logInTo("/%09/evil.example");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  expect(page.url()).toBe(new URL("/", demo.url).href);
+
+  await logInTo(encodeURIComponent("/machines?q=1#top"));
+  await expect(page.getByRole("heading", { name: "Machines", exact: true })).toBeVisible();
+  expect(page.url()).toBe(new URL("/machines?q=1#top", demo.url).href);
 });
 
 test.describe("prices", () => {
@@ -1372,6 +1437,53 @@ test.describe("adding many machines", () => {
     expect(await poll(b.device_code)).toBe("approved");
   });
 
+  test("a new key stays up until Done; the keys keep up; dialogs leave with the page", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await logIn(page);
+    // Within the dashboard, so Back stays on the same page load.
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .getByRole("link", { name: "Machines", exact: true })
+      .click();
+    const card = page
+      .locator("section.card")
+      .filter({ has: page.getByRole("heading", { name: "Add many machines" }) });
+    await card.getByRole("button", { name: "Create an enrollment key" }).click();
+    await page.getByRole("dialog").getByLabel("Name").fill("Lab machines");
+    await page.getByRole("dialog").getByRole("button", { name: "Create" }).click();
+
+    // Escape doesn't lose the key: only Done closes it.
+    const dialog = page.getByRole("dialog", { name: /Enrollment key “Lab machines”/ });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    const key = (await dialog.locator(".command code").first().textContent()) ?? "";
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await expect(dialog).toHaveCount(0);
+    const row = card.locator("tbody tr").filter({ hasText: "Lab machines" });
+    await expect(row.locator("td").nth(3)).toHaveText("0");
+
+    // The list refreshes with the page, every minute.
+    await enroll(key, "lab-01");
+    await page.clock.runFor(61_000);
+    await expect(row.locator("td").nth(3)).toHaveText("1");
+    await expect(row.getByRole("link", { name: "1" })).toBeVisible();
+
+    // Back closes an open dialog with the page it belongs to.
+    await page
+      .locator("tbody tr")
+      .filter({ hasText: "Home PC" })
+      .getByRole("button", { name: "Edit" })
+      .click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+    await expect(page.locator("dialog")).toHaveCount(0);
+  });
+
   test("managers decide for their departments only; revoking a key denies who still waits", async ({
     page,
   }) => {
@@ -1408,5 +1520,90 @@ test.describe("adding many machines", () => {
     await page.goto(new URL("/machines", demo.url).href);
     await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Add many machines" })).toHaveCount(0);
+  });
+
+  test("hundreds of machines are approved in batches, and a failed batch says so", async ({
+    page,
+  }) => {
+    // 603 machines waiting with one key: more than one request can carry.
+    const keyId = "e2e-bulk-key";
+    const now = Date.now();
+    const names = Array.from({ length: 603 }, (_, i) => `bulk-${String(i + 1).padStart(3, "0")}`);
+    await demo.db.batch([
+      demo.db
+        .prepare(
+          "INSERT INTO enrollment_keys (id, name, key_hash, created_at, uses) VALUES (?1, 'Bulk', ?1, ?2, 603)",
+        )
+        .bind(keyId, now),
+      ...names.map((name, i) =>
+        demo.db
+          .prepare(
+            `INSERT INTO pairing_requests (id, device_code_hash, user_code, machine_name, os, arch, agent_version, sync_interval_minutes, created_at, expires_at, status, enrollment_key_id)
+             VALUES (?1, ?1, 'BULK-0000', ?2, 'linux', 'amd64', '0.7.0', 30, ?3, ?4, 'pending', ?5)`,
+          )
+          .bind(`e2e-bulk-${i}`, name, now - i, now + 864e5, keyId),
+      ),
+    ]);
+    // Only these wait.
+    await demo.db
+      .prepare(
+        "UPDATE pairing_requests SET status = 'denied' WHERE status = 'pending' AND enrollment_key_id <> ?1",
+      )
+      .bind(keyId)
+      .run();
+    const approved = async () =>
+      (
+        (await demo.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM pairing_requests WHERE enrollment_key_id = ?1 AND status = 'approved'",
+          )
+          .bind(keyId)
+          .first()) as { n: number }
+      ).n;
+    try {
+      await logIn(page);
+      await page.goto(new URL("/approve", demo.url).href);
+      const list = page
+        .locator("section.card")
+        .filter({ has: page.getByRole("heading", { name: "Joined with an enrollment key" }) });
+      await expect(list.locator("tbody tr")).toHaveCount(names.length);
+      await list.getByRole("checkbox", { name: "Select every machine" }).check();
+
+      // The second batch fails: the first stays approved, the rest stay selected.
+      let calls = 0;
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route("**/api/pairing/decide", async (route) => {
+        calls += 1;
+        if (calls === 1) await held;
+        if (calls === 2) await route.fulfill({ status: 500, body: '{"error":"internal"}' });
+        else await route.continue();
+      });
+      await list.getByRole("button", { name: "Approve 603" }).click();
+      // No second click while it works.
+      await expect(list.getByRole("button", { name: "Approve 603" })).toBeDisabled();
+      await expect(list.getByRole("button", { name: "Deny 603" })).toBeDisabled();
+      await expect(page.getByText("Approving… 0 of 603 done")).toBeVisible();
+      release();
+      await expect(
+        page.getByText("Approved 200 machines, then something went wrong."),
+      ).toBeVisible();
+      expect(await approved()).toBe(200);
+      await expect(list.locator("tbody tr")).toHaveCount(403);
+      await page.unroute("**/api/pairing/decide");
+
+      await list.getByRole("button", { name: "Approve 403" }).click();
+      await expect(page.getByText("Approved 403 machines.")).toBeVisible();
+      await expect(list).toContainText("No machines are waiting right now.");
+      expect(await approved()).toBe(603);
+      expect(calls).toBe(2);
+    } finally {
+      await demo.db.batch([
+        demo.db.prepare("DELETE FROM pairing_requests WHERE enrollment_key_id = ?1").bind(keyId),
+        demo.db.prepare("DELETE FROM enrollment_keys WHERE id = ?1").bind(keyId),
+      ]);
+    }
   });
 });

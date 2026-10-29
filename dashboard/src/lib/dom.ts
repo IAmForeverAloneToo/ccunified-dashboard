@@ -115,7 +115,11 @@ let dialogCount = 0;
 
 export function openDialog(
   build: (close: (value?: string) => void) => Child,
-  opts: { wide?: boolean } = {},
+  opts: {
+    wide?: boolean;
+    /** While this returns true, Escape doesn't close the dialog: it shows something only once. */
+    keepOpen?: (dialog: HTMLDialogElement) => boolean;
+  } = {},
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = h("dialog", { class: opts.wide ? "wide" : undefined });
@@ -131,6 +135,16 @@ export function openDialog(
       title.id ||= `dialog-title-${++dialogCount}`;
       dialog.setAttribute("aria-labelledby", title.id);
     }
+    const keepOpen = opts.keepOpen;
+    if (keepOpen) {
+      // Both: a browser may close on a second Escape even when cancel is prevented.
+      dialog.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && keepOpen(dialog)) event.preventDefault();
+      });
+      dialog.addEventListener("cancel", (event) => {
+        if (keepOpen(dialog)) event.preventDefault();
+      });
+    }
     dialog.addEventListener("close", () => {
       dialog.remove();
       resolve(result);
@@ -138,6 +152,11 @@ export function openDialog(
     document.body.append(dialog);
     dialog.showModal();
   });
+}
+
+/** Closes every open dialog, as Cancel would (when the page changes or the session ends). */
+export function closeDialogs(): void {
+  for (const dialog of document.querySelectorAll("dialog")) dialog.close();
 }
 
 /** Asks a yes/no question in a dialog. */

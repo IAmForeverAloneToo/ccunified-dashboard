@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { familySeries, modelFamily } from "./models";
+import { OTHER } from "./series";
 
 describe("model families", () => {
   test.each([
@@ -66,11 +67,11 @@ describe("model families", () => {
     const series = familySeries(models, models);
     expect(series.get("qwen")?.colorClass).toBe("s7");
     expect(series.get("glm")).toEqual({
-      id: "other",
+      id: OTHER,
       label: "Other models",
       colorClass: "s-other",
     });
-    expect(series.get("deepseek")?.id).toBe("other");
+    expect(series.get("deepseek")?.id).toBe(OTHER);
   });
 
   test("a period with eight families or fewer names each, even after more than eight overall", () => {

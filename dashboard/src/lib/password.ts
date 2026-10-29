@@ -10,7 +10,14 @@ export const MIN_PASSWORD_LENGTH = 10;
 let params: Promise<{ install_id: string }> | undefined;
 
 function loginParams() {
-  params ??= api<{ install_id: string }>("/login-params", { quietAuth: true });
+  if (!params) {
+    const p = api<{ install_id: string }>("/login-params", { quietAuth: true });
+    params = p;
+    // A failed fetch isn't kept: the next try asks again.
+    p.catch(() => {
+      if (params === p) params = undefined;
+    });
+  }
   return params;
 }
 
