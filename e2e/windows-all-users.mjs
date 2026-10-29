@@ -44,7 +44,14 @@ const ownerOf = (path) =>
     ["-NoProfile", "-Command", "(Get-Acl -LiteralPath $env:CCU_PATH).Owner"],
     {
       encoding: "utf8",
-      env: { ...process.env, CCU_PATH: path },
+      // Without PowerShell 7's module path (CI's steps run in it), which
+      // keeps Windows PowerShell from loading Get-Acl.
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([k]) => k.toLowerCase() !== "psmodulepath"),
+        ),
+        CCU_PATH: path,
+      },
     },
   ).trim();
 const filesIn = (dir) =>

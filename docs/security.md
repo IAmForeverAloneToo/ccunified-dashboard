@@ -117,10 +117,13 @@ at your own subdomain.
 - **On a computer set up for every account**, the key and each account's
   upload key are in a folder only administrators can read (`/var/lib/ccunified`
   or `%ProgramData%\ccunified`). The folder is created that way from the
-  start; one that already exists must be a real folder (not a link), and is
-  taken over if someone else created it first (any account may create folders
-  in ProgramData): Administrators become its owner, everything in it is made
-  private, and links in it are removed. On Linux it must belong to root.
+  start; one that already exists must be a real folder (not a link), belong to
+  SYSTEM or Administrators (root on Linux) and be private to them, or setup
+  refuses it. Any account may create folders in ProgramData, so someone could
+  create it first; it isn't taken over in place, because changing who may use
+  a folder also changes what's in it, which could lead elsewhere. An
+  administrator's own folder that isn't private yet is fixed only while it's
+  empty.
 - ccusage runs **as each account**, with that account's rights and none of
   root's or SYSTEM's, so it reads only that account's files. On Windows,
   SYSTEM logs the account on without its password (an S4U logon, as Task

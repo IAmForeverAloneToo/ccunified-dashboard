@@ -19,17 +19,16 @@ func isUnsupported(error) bool { return true }
 // A system-wide install's folders are private to SYSTEM and Administrators,
 // inherited by everything in them and nothing inherited from above
 // (ProgramData lets every account read, and create folders).
-const (
-	privateDirDACL  = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
-	privateFileDACL = "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
-)
+const privateDirDACL = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
 // makePrivateDir creates a folder of a system-wide install with that
 // access from the start, so no one else ever holds it, or makes sure the
-// one there has it. A link (a junction or symbolic link) is refused. A
-// folder someone else created first (a standard account may, in
-// ProgramData) is taken over: Administrators become its owner, and
-// everything in it gets the same access, links in it removed.
+// one there has it. A folder isn't taken over in place: setting access on a
+// folder passes it on to what's inside, which could reach, through hard
+// links someone else planted, files outside it. So a link (a junction or
+// symbolic link) is refused, and so is a folder whose owner isn't SYSTEM or
+// Administrators (a standard account may create folders in ProgramData).
+// An administrator's folder without that access is fixed only while empty.
 func makePrivateDir(dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
@@ -47,110 +46,84 @@ func makePrivateDir(dir string) error {
 	if err == nil || !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		return err
 	}
-	// Administrators may open, and take over, anything.
-	enablePrivileges("SeBackupPrivilege", "SeRestorePrivilege", "SeTakeOwnershipPrivilege")
-	trusted, err := secure(dir, true, true)
-	if err != nil {
-		return fmt.Errorf("couldn't make %s private to administrators: %w", dir, err)
-	}
-	if !trusted {
-		if err := secureInside(dir); err != nil {
-			return fmt.Errorf("couldn't make what's in %s private to administrators: %w", dir, err)
-		}
+	if err := checkPrivateDir(dir, path, sd); err != nil {
+		return fmt.Errorf("%s: %w", dir, err)
 	}
 	return nil
 }
 
-var errLink = errors.New("it's a link to somewhere else; remove it and try again")
+var (
+	errLink       = errors.New("it's a link to somewhere else; remove it and try again")
+	errNotOurs    = errors.New("another account created it, so it can't be trusted; remove it and try again")
+	errNotPrivate = errors.New("others may change what's in it; remove it and try again")
+	errNotAFolder = errors.New("it isn't a folder; remove it and try again")
+)
 
-// secure gives a file or folder the private access, and Administrators as
-// owner unless it's SYSTEM or Administrators already (then it reports
-// trusted). It never follows a link. With refuse, a link (or a file where a
-// folder should be) is an error; without, inside a folder being taken
-// over, links are removed, and so are files with other names (hard links):
-// setting their access would change the file they're linked to.
-func secure(path string, isDir, refuse bool) (trusted bool, err error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return false, err
-	}
-	h, err := windows.CreateFile(p, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER|windows.FILE_READ_ATTRIBUTES,
+// checkPrivateDir accepts an existing folder that is SYSTEM's or
+// Administrators' and private to them, and makes an administrator's empty
+// folder private.
+func checkPrivateDir(dir string, path *uint16, want *windows.SECURITY_DESCRIPTOR) error {
+	h, err := windows.CreateFile(path, windows.READ_CONTROL|windows.WRITE_DAC|windows.FILE_READ_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
-		return false, err
+		return err
 	}
-	defer func() { windows.CloseHandle(h) }()
+	defer windows.CloseHandle(h)
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return false, err
+		return err
 	}
-	link := info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
-	dir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	if refuse {
-		if link {
-			return false, errLink
-		}
-		if dir != isDir {
-			return false, errors.New("it isn't a folder; remove it and try again")
-		}
-	} else if link || (!dir && info.NumberOfLinks > 1) {
-		windows.CloseHandle(h)
-		h = windows.InvalidHandle
-		return false, os.Remove(path)
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errLink
 	}
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
-	if err != nil {
-		return false, err
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return errNotAFolder
 	}
-	owner, _, err := sd.Owner()
-	if err != nil {
-		return false, err
-	}
-	trusted = owner.IsWellKnown(windows.WinLocalSystemSid) || owner.IsWellKnown(windows.WinBuiltinAdministratorsSid)
-	sddl := privateFileDACL
-	if dir {
-		sddl = privateDirDACL
-	}
-	want, err := windows.SecurityDescriptorFromString(sddl)
-	if err != nil {
-		return false, err
-	}
-	dacl, _, err := want.DACL()
-	if err != nil {
-		return false, err
-	}
-	what := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
-	var newOwner *windows.SID
-	if !trusted {
-		if newOwner, err = windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid); err != nil {
-			return false, err
-		}
-		what |= windows.OWNER_SECURITY_INFORMATION
-	}
-	return trusted, windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, what, newOwner, nil, dacl, nil)
-}
-
-// secureInside secures everything in a folder that was taken over, and
-// removes links in it (they could lead anywhere).
-func secureInside(dir string) error {
-	entries, err := os.ReadDir(dir)
+	have, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		path := filepath.Join(dir, e.Name())
-		if _, err := secure(path, e.IsDir(), false); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+	owner, _, err := have.Owner()
+	if err != nil {
+		return err
+	}
+	if !owner.IsWellKnown(windows.WinLocalSystemSid) && !owner.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
+		return errNotOurs
+	}
+	if isPrivate(have) {
+		return nil
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) > 0 {
+		return errNotPrivate
+	}
+	dacl, _, err := want.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+}
+
+// isPrivate reports whether only SYSTEM and Administrators have access
+// (set on it, or inherited from a private folder above).
+func isPrivate(sd *windows.SECURITY_DESCRIPTOR) bool {
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl == nil {
+		return false
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if windows.GetAce(dacl, i, &ace) != nil || ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return false
 		}
-		// Only real folders are left (links were removed).
-		if info, err := os.Lstat(path); err == nil && info.Mode().Type() == os.ModeDir {
-			if err := secureInside(path); err != nil {
-				return err
-			}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !sid.IsWellKnown(windows.WinLocalSystemSid) && !sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 // enablePrivileges turns on privileges this program's account holds, as

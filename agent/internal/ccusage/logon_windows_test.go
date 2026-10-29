@@ -91,8 +91,13 @@ func TestLogOnFailsRatherThanRunningAsSYSTEM(t *testing.T) {
 // copy of it), as only SYSTEM can log other accounts on.
 func TestRunsWithTheLogonsToken(t *testing.T) {
 	stubLogOn(t, func(string, string) (windows.Token, error) {
-		var tok windows.Token
-		err := windows.DuplicateTokenEx(windows.GetCurrentProcessToken(), windows.MAXIMUM_ALLOWED, nil,
+		// A real handle: DuplicateTokenEx refuses the current-token pseudo-handle.
+		var self, tok windows.Token
+		if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY, &self); err != nil {
+			return 0, err
+		}
+		defer self.Close()
+		err := windows.DuplicateTokenEx(self, windows.MAXIMUM_ALLOWED, nil,
 			windows.SecurityImpersonation, windows.TokenPrimary, &tok)
 		return tok, err
 	})

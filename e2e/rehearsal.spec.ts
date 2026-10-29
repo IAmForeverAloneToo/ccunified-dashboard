@@ -12,6 +12,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -134,6 +135,9 @@ test.beforeAll(async () => {
   ccusagePath = ccusage;
   copyFileSync(join(agentDir, "internal/ccusage/bin/linux-amd64/ccusage"), ccusage);
   chmodSync(ccusage, 0o755);
+  // Copies keep their source's owner; as root, the program must be root's
+  // alone to be installed for every account.
+  if (process.getuid?.() === 0) for (const f of [exe, ccusage]) chownSync(f, 0, 0);
 
   logs = prepareLogs(join(root, "machines"), NAMES);
   expected = [

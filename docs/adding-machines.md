@@ -127,8 +127,9 @@ elevated window), setup installs ccunified for the whole computer:
 - The program goes to `/opt/ccunified` (with the command in
   `/usr/local/bin`) or `%ProgramFiles%\ccunified`, and the settings, including
   the enrollment key, to a folder only administrators can read:
-  `/var/lib/ccunified` or `%ProgramData%\ccunified`. Setup takes over a
-  settings folder someone else created first, and refuses one that is a link.
+  `/var/lib/ccunified` or `%ProgramData%\ccunified`. Setup refuses a
+  settings folder someone else created first, or one that is a link; remove it
+  and run setup again.
 - Setup copies the program only from a folder that is root's alone (on
   Windows, not from another account's profile): run the install script as
   root or SYSTEM, not setup from someone's own install.

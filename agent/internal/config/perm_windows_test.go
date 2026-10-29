@@ -74,9 +74,10 @@ func TestPrivateDirRefusesALink(t *testing.T) {
 	}
 }
 
-// TestPrivateDirTakesOverSomeoneElsesFolder: a standard account created the
-// folder first, and put links in it.
-func TestPrivateDirTakesOverSomeoneElsesFolder(t *testing.T) {
+// TestPrivateDirRefusesSomeoneElsesFolder: a standard account created the
+// folder first, and put links in it. It's refused, and nothing it leads to
+// is changed.
+func TestPrivateDirRefusesSomeoneElsesFolder(t *testing.T) {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		t.Skip("needs an administrator's elevated window")
 	}
@@ -88,9 +89,7 @@ func TestPrivateDirTakesOverSomeoneElsesFolder(t *testing.T) {
 	before, _ := windows.GetNamedSecurityInfo(secret, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 
 	dir := filepath.Join(root, "ccunified")
-	alice := filepath.Join(dir, "users", "alice")
-	os.MkdirAll(alice, 0o755)
-	os.WriteFile(filepath.Join(alice, "config.json"), []byte("{}"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "users"), 0o755)
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(dir, "users", "bob"), outside).CombinedOutput(); err != nil {
 		t.Skipf("couldn't make a junction: %v %s", err, out)
 	}
@@ -103,21 +102,30 @@ func TestPrivateDirTakesOverSomeoneElsesFolder(t *testing.T) {
 		t.Skipf("couldn't give the folder to Users: %v", err)
 	}
 
-	if err := makePrivateDir(dir); err != nil {
-		t.Fatal(err)
-	}
-	if owner := checkPrivate(t, dir); !owner.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
-		t.Errorf("owner is %s", owner)
-	}
-	checkPrivate(t, alice)
-	checkPrivate(t, filepath.Join(alice, "config.json"))
-	for _, gone := range []string{filepath.Join(dir, "users", "bob"), filepath.Join(dir, "system.json")} {
-		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
-			t.Errorf("the link %s is still there (%v)", gone, err)
-		}
+	if err := makePrivateDir(dir); err == nil || !errors.Is(err, errNotOurs) {
+		t.Errorf("someone else's folder was accepted: %v", err)
 	}
 	after, err := windows.GetNamedSecurityInfo(secret, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil || after.String() != before.String() {
 		t.Errorf("a linked file outside was changed: %v, %s -> %s", err, before, after)
+	}
+}
+
+// An administrator's folder that isn't private is fixed while empty, and
+// refused once something is in it.
+func TestPrivateDirFixesOnlyAnEmptyFolder(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty")
+	os.Mkdir(empty, 0o755)
+	if err := makePrivateDir(empty); err != nil {
+		t.Fatal(err)
+	}
+	checkPrivate(t, empty)
+
+	full := filepath.Join(root, "full")
+	os.Mkdir(full, 0o755)
+	os.WriteFile(filepath.Join(full, "system.json"), []byte("{}"), 0o644)
+	if err := makePrivateDir(full); err == nil || !errors.Is(err, errNotPrivate) {
+		t.Errorf("a folder others may change was accepted: %v", err)
 	}
 }
