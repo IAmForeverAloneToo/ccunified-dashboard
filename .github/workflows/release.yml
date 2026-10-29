@@ -34,15 +34,20 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the history of Main, to check that a tag is on it
+      # Release builds use an exact Node.js version, and no caches: a cache
+      # can be written by any CI run, including one for a pull request.
+      # Update the Node.js version from time to time (Dependabot doesn't).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-          check-latest: true
+          node-version: 24.22.1
+          package-manager-cache: false
       - run: npm install -g "$(node -p "require('./package.json').packageManager")"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: agent/go.mod
-          cache-dependency-path: agent/go.sum
+          cache: false
       - id: version
         name: Work out the version
         env:
@@ -61,6 +66,10 @@ jobs:
             fi
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v="${GITHUB_REF_NAME#v}"
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/Main; then
+              echo "::error::Releases are made from Main; $GITHUB_REF_NAME points to a commit that isn't on Main"
+              exit 1
+            fi
           else
             v="0.0.0-ci.${GITHUB_RUN_NUMBER}"
             publish=false
@@ -133,6 +142,9 @@ jobs:
     needs: [build, smoke]
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    # Required reviewers can be added to this environment in the repository's
+    # settings (see docs/releasing.md); without them it publishes right away.
+    environment: release
     permissions:
       contents: write
     steps:
@@ -154,6 +166,12 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             args+=(--target "$GITHUB_SHA")
           else
+            # The tag must still point to the commit that was built and tested.
+            tagged="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)"
+            if [[ "$tagged" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG was moved to $tagged after the build of $GITHUB_SHA; push the tag again"
+              exit 1
+            fi
             args+=(--verify-tag)
           fi
           [[ "$VERSION" == *-* ]] && args+=(--prerelease)

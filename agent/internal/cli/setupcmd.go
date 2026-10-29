@@ -49,7 +49,7 @@ CCUNIFIED_ALL_USERS=1.`,
 	register(&Command{
 		Name:    "server",
 		Summary: "Update, recover or remove the dashboard on Cloudflare (needs a Cloudflare API token)",
-		Usage:   "ccunified server update | server reset-password [username] | server remove",
+		Usage:   "ccunified server update [--force] | server reset-password [username] | server remove",
 		Run:     runServer,
 	})
 	ScheduleStatus = func() string {
@@ -191,10 +191,15 @@ func runServer(ctx context.Context, env *Env, args []string) error {
 	p := prompt.New(env.Stdin, env.Stdout)
 	switch args[0] {
 	case "update":
-		if len(args) != 1 {
+		fs := newFlags("server update", env)
+		force := fs.Bool("force", false, "update even if the dashboard's version can't be checked")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() > 0 {
 			return &UsageError{Msg: "unexpected arguments"}
 		}
-		return setup.ServerUpdate(ctx, p, cloudflareFactory)
+		return setup.ServerUpdate(ctx, p, cloudflareFactory, *force)
 	case "reset-password":
 		user := ""
 		if len(args) == 2 {

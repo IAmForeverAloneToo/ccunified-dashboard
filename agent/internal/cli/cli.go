@@ -11,6 +11,9 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"time"
+
+	"golang.org/x/term"
 )
 
 // Command is one subcommand.
@@ -64,8 +67,25 @@ func help(env *Env) {
 
 // Main runs the program and returns its exit code.
 func Main(args []string, env *Env) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	return run(args, env, interrupts)
+}
+
+// exitInterrupted is the exit code after Ctrl+C, as shells use.
+const exitInterrupted = 130
+
+// stopHintDelay is how long a command may take to stop after Ctrl+C before
+// the user is told about the second Ctrl+C.
+var stopHintDelay = time.Second
+
+// run runs the command named in args. The first Ctrl+C (a value on
+// interrupts) cancels the command's context, so it can stop and clean up;
+// a second one returns at once.
+func run(args []string, env *Env, interrupts <-chan os.Signal) int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	if len(args) == 0 {
 		help(env)
@@ -91,13 +111,39 @@ func Main(args []string, env *Env) int {
 		help(env)
 		return 2
 	}
-	err := c.Run(ctx, env, args[1:])
+	// A password prompt left by Ctrl+C would leave typing hidden.
+	defer restoreTerminal(env.Stdin)()
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx, env, args[1:]) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-interrupts:
+		cancel()
+		hint := time.NewTimer(stopHintDelay)
+		defer hint.Stop()
+	waiting:
+		for {
+			select {
+			case err = <-done:
+				break waiting
+			case <-hint.C:
+				fmt.Fprintf(env.Stderr, "\nStopping… press Ctrl+C again to quit now.\n")
+			case <-interrupts:
+				fmt.Fprintf(env.Stderr, "\nccunified %s: stopped\n", name)
+				return exitInterrupted
+			}
+		}
+	}
 	var usageErr *UsageError
 	switch {
 	case err == nil:
 		return 0
 	case errors.Is(err, flag.ErrHelp):
 		return 0
+	case ctx.Err() != nil:
+		fmt.Fprintf(env.Stderr, "ccunified %s: %s\n", name, firstUpper(err.Error()))
+		return exitInterrupted
 	case errors.As(err, &usageErr):
 		fmt.Fprintf(env.Stderr, "ccunified %s: %s\nUsage: %s\n", name, usageErr.Msg, c.Usage)
 		return 2
@@ -105,6 +151,20 @@ func Main(args []string, env *Env) int {
 		fmt.Fprintf(env.Stderr, "ccunified %s: %s\n", name, firstUpper(err.Error()))
 		return 1
 	}
+}
+
+// restoreTerminal saves the state of in, if it's a terminal, and returns a
+// function that puts it back.
+func restoreTerminal(in io.Reader) func() {
+	f, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(f.Fd())) {
+		return func() {}
+	}
+	state, err := term.GetState(int(f.Fd()))
+	if err != nil {
+		return func() {}
+	}
+	return func() { term.Restore(int(f.Fd()), state) }
 }
 
 func firstUpper(s string) string {

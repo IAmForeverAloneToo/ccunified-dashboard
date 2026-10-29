@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,11 @@ type fakeCF struct {
 	workersDevOff bool
 	domain        string
 	attachErr     error
+	// upload, if set, runs instead of a successful upload (after recording it).
+	upload func() error
+	// workerAccount has a ccunified Worker (without a database, unless existingDB).
+	workerAccount string
+	noDomains     bool // the dashboard has no address attached
 	calls         []string
 }
 
@@ -65,10 +71,15 @@ func (f *fakeCF) D1(account, id string) server.D1 {
 	}
 	return f.db
 }
-func (f *fakeCF) WorkerExists(context.Context, string, string) (bool, error) { return false, nil }
+func (f *fakeCF) WorkerExists(_ context.Context, account, _ string) (bool, error) {
+	return account == f.workerAccount, nil
+}
 func (f *fakeCF) UploadWorker(_ context.Context, account, name string, module []byte, dbID string) error {
-	f.uploaded, f.uploadedDB = module, dbID
 	f.calls = append(f.calls, "upload:"+name)
+	if f.upload != nil {
+		return f.upload()
+	}
+	f.uploaded, f.uploadedDB = module, dbID
 	return nil
 }
 func (f *fakeCF) DisableWorkersDev(context.Context, string, string) error {
@@ -79,20 +90,29 @@ func (f *fakeCF) HostnameInUse(_ context.Context, zone, host string) (bool, erro
 	return f.takenHosts[host], nil
 }
 func (f *fakeCF) Domains(context.Context, string, string) ([]Domain, error) {
-	if f.domain == "" && !f.existingDB {
+	if f.noDomains || f.domain == "" && !f.existingDB {
 		return nil, nil
 	}
 	return []Domain{{ID: "dom1", Hostname: "ccu.example.org"}}, nil
 }
-func (f *fakeCF) DeleteDomain(_ context.Context, _, id string) error {
+func (f *fakeCF) DeleteDomain(ctx context.Context, _, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.calls = append(f.calls, "delete-domain:"+id)
 	return nil
 }
-func (f *fakeCF) DeleteWorker(_ context.Context, _, name string) error {
+func (f *fakeCF) DeleteWorker(ctx context.Context, _, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.calls = append(f.calls, "delete-worker:"+name)
 	return nil
 }
-func (f *fakeCF) DeleteDatabase(_ context.Context, _, id string) error {
+func (f *fakeCF) DeleteDatabase(ctx context.Context, _, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.calls = append(f.calls, "delete-db:"+id)
 	return nil
 }
@@ -253,6 +273,68 @@ func TestCreateFailurePartwayOffersCleanup(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatal("schedule or sync ran after a failed setup")
+	}
+}
+
+// Cloudflare may store the Worker even when the upload seems to fail (a
+// timeout), so cleaning up deletes it too; otherwise setup couldn't be run
+// again.
+func TestCreateUploadFailureRemovesTheWorkerToo(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	cf := &fakeCF{t: t, goodToken: "t", db: d1test.New(t), upload: func() error { return context.DeadlineExceeded }}
+	factory := func(token string) Cloudflare { cf.token = token; return cf }
+	answers := "t\n1\n1\n\nUTC\nadmin\nlong enough password\nlong enough password\nPC\n\ny\ny\n"
+	out := &bytes.Buffer{}
+	err := create(context.Background(), prompt.New(strings.NewReader(answers), out), testHooks(new([]string)), factory, testAssets(t))
+	if err == nil || !strings.Contains(err.Error(), "uploading the Worker") {
+		t.Fatalf("got %v\n%s", err, out)
+	}
+	if got := strings.Join(cf.calls, ","); !strings.HasSuffix(got, "upload:ccunified,delete-worker:ccunified,delete-db:db-123") {
+		t.Fatalf("calls: %v", cf.calls)
+	}
+	if !strings.Contains(out.String(), "✓ Removed") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// After Ctrl+C partway, cleaning up still reaches Cloudflare.
+func TestCreateInterruptedPartwayStillCleansUp(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cf := &fakeCF{t: t, goodToken: "t", db: d1test.New(t)}
+	cf.upload = func() error { cancel(); return context.Canceled }
+	factory := func(token string) Cloudflare { cf.token = token; return cf }
+	answers := "t\n1\n1\n\nUTC\nadmin\nlong enough password\nlong enough password\nPC\n\ny\ny\n"
+	out := &bytes.Buffer{}
+	if err := create(ctx, prompt.New(strings.NewReader(answers), out), testHooks(new([]string)), factory, testAssets(t)); err == nil {
+		t.Fatalf("no error\n%s", out)
+	}
+	if got := strings.Join(cf.calls, ","); !strings.HasSuffix(got, "delete-worker:ccunified,delete-db:db-123") {
+		t.Fatalf("calls: %v\n%s", cf.calls, out)
+	}
+}
+
+// Ctrl+C while a question waits for an answer ends setup at once.
+func TestCreateInterruptedAtAPrompt(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	cf := &fakeCF{t: t, goodToken: "t", db: d1test.New(t)}
+	factory := func(token string) Cloudflare { cf.token = token; return cf }
+	in, typing := io.Pipe() // nobody types
+	t.Cleanup(func() { typing.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	result := make(chan error, 1)
+	go func() {
+		result <- create(ctx, prompt.New(in, io.Discard), testHooks(new([]string)), factory, testAssets(t))
+	}()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "nothing was created") {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the prompt kept waiting after Ctrl+C")
 	}
 }
 

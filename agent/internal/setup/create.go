@@ -128,7 +128,52 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 	if err != nil {
 		return err
 	}
+	var a createAnswers
+	if err := ask(ctx, func() error { return a.ask(ctx, p, factory) }); err != nil {
+		if errors.Is(err, errCancelled) {
+			return errors.New("setup cancelled; nothing was created")
+		}
+		return err
+	}
+	return a.build(ctx, p, h, module, migrations)
+}
 
+// errCancelled is returned when Ctrl+C interrupts the questions.
+var errCancelled = errors.New("cancelled")
+
+// ask runs questions so that Ctrl+C can interrupt them: a prompt waits for
+// the terminal and doesn't see ctx. When ctx ends, ask returns errCancelled
+// at once and the unfinished questions are abandoned (the program is about
+// to exit).
+func ask(ctx context.Context, questions func() error) error {
+	if ctx.Err() != nil {
+		return errCancelled
+	}
+	done := make(chan error, 1)
+	go func() { done <- questions() }()
+	select {
+	case err := <-done:
+		if ctx.Err() != nil {
+			return errCancelled
+		}
+		return err
+	case <-ctx.Done():
+		return errCancelled
+	}
+}
+
+// createAnswers are the wizard's answers, all asked before anything is created.
+type createAnswers struct {
+	cf                               Cloudflare
+	account                          Account
+	zone                             Zone
+	hostname, tz, username, password string
+	machineName                      string
+	interval                         int
+}
+
+// ask asks the wizard's questions, ending with the user's go-ahead.
+func (a *createAnswers) ask(ctx context.Context, p *prompt.Prompter, factory CloudflareFactory) error {
 	p.Printf("\nCreate a new dashboard\n\n")
 	p.Printf("This creates, on your Cloudflare account (the free plan is enough):\n")
 	p.Printf("  - a database (D1) and the dashboard itself (a Worker), both named %q\n", WorkerName)
@@ -183,7 +228,8 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 	if exists, err := cf.WorkerExists(ctx, account.ID, WorkerName); err != nil {
 		return fmt.Errorf("couldn't list Workers: %w", err)
 	} else if exists {
-		return fmt.Errorf("this Cloudflare account already has a Worker called %q; remove it or use another account", WorkerName)
+		return fmt.Errorf("this Cloudflare account already has a Worker called %q but no ccunified database "+
+			"(perhaps from a setup that stopped partway). To remove it, run: ccunified server remove. Or use another account", WorkerName)
 	}
 
 	zones, err := cf.Zones(ctx, account.ID)
@@ -276,7 +322,17 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 	if !ok {
 		return errors.New("setup cancelled; nothing was created")
 	}
+	*a = createAnswers{cf: cf, account: account, zone: zone, hostname: hostname, tz: tz,
+		username: username, password: password, machineName: machineName, interval: interval}
+	return nil
+}
 
+// build creates the dashboard on Cloudflare and connects this machine to it.
+func (a *createAnswers) build(ctx context.Context, p *prompt.Prompter, h *Hooks, module []byte, migrations []server.Migration) error {
+	cf, account, zone, hostname := a.cf, a.account, a.zone, a.hostname
+	tz, username, password := a.tz, a.username, a.password
+	machineName, interval := a.machineName, a.interval
+	url := "https://" + hostname
 	step := func(done string, err error) error {
 		if err != nil {
 			p.Printf("  ✗ %s\n", done)
@@ -297,7 +353,10 @@ func create(ctx context.Context, p *prompt.Prompter, h *Hooks, factory Cloudflar
 		module: module, migrations: migrations, tz: tz, username: username, password: password,
 		zone: zone, hostname: hostname, step: step,
 	}); err != nil {
-		created.offerRollback(ctx, p, cf)
+		// Clean up even after Ctrl+C, which cancelled ctx.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		created.offerRollback(cleanupCtx, p, cf)
+		cancel()
 		return err
 	}
 	db := cf.D1(account.ID, dbID)
@@ -399,18 +458,21 @@ func buildDashboard(ctx context.Context, p *prompt.Prompter, cf Cloudflare, crea
 	if err := o.step(fmt.Sprintf("Created the admin account %q", o.username), server.CreateAdmin(ctx, db, o.username, o.password)); err != nil {
 		return err
 	}
+	// Count the Worker and the domain as created before asking for them:
+	// after an error or a timeout, Cloudflare may have made them anyway.
+	// Removing ones that don't exist is fine.
+	created.worker = true
 	err = cf.UploadWorker(ctx, created.account, WorkerName, o.module, created.databaseID)
 	if err := o.step("Uploaded the dashboard", err); err != nil {
 		return fmt.Errorf("uploading the Worker: %w", err)
 	}
-	created.worker = true
 	if err := o.step("Turned off the workers.dev address (the dashboard is only at your domain)", cf.DisableWorkersDev(ctx, created.account, WorkerName)); err != nil {
 		return err
 	}
+	created.domainHost = o.hostname
 	if err := o.step("Connected https://"+o.hostname, cf.AttachDomain(ctx, created.account, o.zone.ID, o.hostname, WorkerName)); err != nil {
 		return fmt.Errorf("connecting %s: %w", o.hostname, err)
 	}
-	created.domainHost = o.hostname
 	return nil
 }
 
@@ -422,20 +484,32 @@ func (c *createdResources) offerRollback(ctx context.Context, p *prompt.Prompter
 		p.Printf("Left in place. To remove it later, run: ccunified server remove\n")
 		return
 	}
+	failed := false
 	if c.domainHost != "" {
-		if domains, err := cf.Domains(ctx, c.account, WorkerName); err == nil {
-			for _, d := range domains {
-				cf.DeleteDomain(ctx, c.account, d.ID)
+		domains, err := cf.Domains(ctx, c.account, WorkerName)
+		if err != nil {
+			p.Printf("  ! Couldn't list the dashboard's domains: %v\n", err)
+			failed = true
+		}
+		for _, d := range domains {
+			if err := cf.DeleteDomain(ctx, c.account, d.ID); err != nil {
+				p.Printf("  ! Couldn't remove %s: %v\n", d.Hostname, err)
+				failed = true
 			}
 		}
 	}
 	if c.worker {
 		if err := cf.DeleteWorker(ctx, c.account, WorkerName); err != nil {
 			p.Printf("  ! Couldn't delete the Worker: %v\n", err)
+			failed = true
 		}
 	}
 	if err := cf.DeleteDatabase(ctx, c.account, c.databaseID); err != nil {
 		p.Printf("  ! Couldn't delete the database: %v\n", err)
+		failed = true
+	}
+	if failed {
+		p.Printf("To remove the rest later, run: ccunified server remove\n")
 		return
 	}
 	p.Printf("  ✓ Removed. You can run ccunified setup again.\n")

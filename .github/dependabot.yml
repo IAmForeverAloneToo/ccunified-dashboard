@@ -1,0 +1,17 @@
+# Weekly pull requests for outdated dependencies. Go's own version (the go
+# line in agent/go.mod) and the Node.js version in the workflows are updated
+# by hand.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /agent
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

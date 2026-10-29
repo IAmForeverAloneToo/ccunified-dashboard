@@ -125,7 +125,10 @@ on Cloudflare before you answer **Y**.
   out, which can ask for your sudo password once. See
   [Add machines](adding-machines.md#linux-keep-syncing-while-logged-out).
 - **If a step fails partway**, the wizard offers to remove what it created, so
-  you can fix the problem and run `ccunified setup` again.
+  you can fix the problem and run `ccunified setup` again. The same happens
+  if you press Ctrl+C while it creates the dashboard; press Ctrl+C a second
+  time to quit at once. Anything left behind, even a lone `ccunified` Worker
+  without its database, can be removed later with `ccunified server remove`.
 
 ## 5. Log in
 

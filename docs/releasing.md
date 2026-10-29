@@ -11,13 +11,23 @@ Either:
 - **From GitHub:** open **Actions › Release › Run workflow**, keep the branch
   on `Main`, enter the version (for example `0.2.0`) and click **Run
   workflow**. The workflow creates the tag `v0.2.0` on the commit it built.
-- **With a tag:** `git tag v0.2.0 && git push origin v0.2.0`.
+- **With a tag:** `git tag v0.2.0 && git push origin v0.2.0`. The tagged
+  commit must already be on `Main` (pushed first).
 
 Versions look like `1.2.3`. A version with a suffix, such as `0.2.0-rc.1`, is
 published as a **pre-release**: the installers' `latest` links and
 `ccunified update` ignore it, so it's safe for trying a release out. The
 workflow refuses versions that aren't in this form, versions that already
-exist, and runs from other branches.
+exist, runs from other branches, and tags on commits that aren't on `Main`.
+
+### Approving releases
+
+The publish step runs in the GitHub environment `release`, which GitHub
+creates on the first release. To have every release wait for your approval
+before it's published, open **Settings › Environments › release**, check
+**Required reviewers** and add yourself (and anyone else who may approve).
+Without reviewers, releases publish as soon as the checks pass. You can also
+limit **Deployment branches and tags** to `Main` and `v*` tags there.
 
 ## What the Release workflow does
 
@@ -34,6 +44,14 @@ exist, and runs from other branches.
 
 Every push to `Main` runs steps 1 and 2 with a version like `0.0.0-ci.42`,
 without publishing, so a broken release is caught before anyone releases it.
+
+The build uses the Go version in `agent/go.mod` (the `go` line) and the exact
+Node.js version set in `.github/workflows/release.yml`, and no caches from
+other workflow runs, so a release is built only from the commit and those
+pinned tools. Raise both from time to time, for example when a security fix
+comes out; Dependabot proposes updates for the Go modules, the npm packages
+and the workflow actions, but not for these two. The CI workflow uses the
+newest Node.js 24, so a new Node.js release is tested there first.
 
 ## The release files
 

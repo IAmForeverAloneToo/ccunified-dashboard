@@ -16,7 +16,8 @@ import (
 func existingInstall(t *testing.T) (*fakeCF, CloudflareFactory) {
 	t.Helper()
 	cf := &fakeCF{t: t, goodToken: "tok", existingDB: true, db: d1test.New(t)}
-	setRunningVersion(t, "", errors.New("not reachable in tests"))
+	setProgramVersion(t, "1.0.0")
+	setRunningVersion(t, "1.0.0", nil)
 	ctx := context.Background()
 	migrations, _ := testAssets(t).Migrations()
 	if _, err := server.ApplyMigrations(ctx, cf.db, migrations[:0]); err != nil { // only the bookkeeping table
@@ -28,7 +29,7 @@ func existingInstall(t *testing.T) (*fakeCF, CloudflareFactory) {
 func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	cf, factory := existingInstall(t)
 	out := &bytes.Buffer{}
-	if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
+	if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if string(cf.uploaded) != "export default {}" || cf.uploadedDB != "old-db" || !cf.workersDevOff {
@@ -45,7 +46,7 @@ func TestServerUpdateAppliesMigrationsAndUploads(t *testing.T) {
 	}
 	// Running it again finds nothing to migrate.
 	out.Reset()
-	serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t))
+	serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false)
 	if !strings.Contains(out.String(), "already up to date") {
 		t.Fatalf("second run:\n%s", out)
 	}
@@ -72,7 +73,7 @@ func TestServerUpdateFromTheFirstRelease(t *testing.T) {
 		}
 	}
 	out := &bytes.Buffer{}
-	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
+	if err := serverUpdate(ctx, prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(out.String(), "Updated the database (0002_tools.sql, 0003_models.sql, 0004_access.sql, 0005_prices.sql, 0006_removed.sql, 0007_enrollment.sql)") {
@@ -155,7 +156,7 @@ func TestServerUpdateRefusesToDowngrade(t *testing.T) {
 	setProgramVersion(t, "0.1.0")
 	setRunningVersion(t, "0.1.1", nil)
 	out := &bytes.Buffer{}
-	err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t))
+	err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false)
 	if err == nil || !strings.Contains(err.Error(), "newer than this program (0.1.0)") {
 		t.Fatalf("got %v\n%s", err, out)
 	}
@@ -166,9 +167,89 @@ func TestServerUpdateRefusesToDowngrade(t *testing.T) {
 	// The same or an older running version is updated as usual.
 	for _, running := range []string{"0.1.0", "0.0.9"} {
 		setRunningVersion(t, running, nil)
-		if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t)); err != nil {
+		if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false); err != nil {
 			t.Fatalf("running %s: %v\n%s", running, err, out)
 		}
+	}
+
+	// --force doesn't override a dashboard that is known to be newer.
+	setRunningVersion(t, "0.1.1", nil)
+	cf.uploaded = nil
+	if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), true); err == nil || cf.uploaded != nil {
+		t.Fatalf("forced over a newer dashboard: %v", err)
+	}
+}
+
+// The database shows a newer dashboard even when the dashboard doesn't
+// answer: it has migrations this program doesn't have.
+func TestServerUpdateRefusesANewerDatabase(t *testing.T) {
+	cf, factory := existingInstall(t)
+	setRunningVersion(t, "", errors.New("not reachable"))
+	migrations, _ := testAssets(t).Migrations()
+	future := append(migrations[:len(migrations):len(migrations)], server.Migration{Name: "9999_future.sql", SQL: "SELECT 1;"})
+	if _, err := server.ApplyMigrations(context.Background(), cf.db, future); err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []bool{false, true} {
+		out := &bytes.Buffer{}
+		err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), force)
+		if err == nil || !strings.Contains(err.Error(), "this dashboard is newer than this ccunified") ||
+			!strings.Contains(err.Error(), "9999_future.sql") || !strings.Contains(err.Error(), "ccunified update") {
+			t.Fatalf("force=%v: got %v\n%s", force, err, out)
+		}
+		if cf.uploaded != nil {
+			t.Fatal("the older dashboard was uploaded")
+		}
+	}
+}
+
+// When the dashboard's version can't be checked, updating needs --force.
+func TestServerUpdateNeedsForceWhenTheVersionIsUnknown(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		program string
+		running string
+		err     error
+		domain  bool
+	}{
+		{"doesn't answer", "1.0.0", "", errors.New("timeout"), true},
+		{"no address", "1.0.0", "1.0.0", nil, false},
+		{"development build", "dev", "1.0.0", nil, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cf, factory := existingInstall(t)
+			setProgramVersion(t, c.program)
+			setRunningVersion(t, c.running, c.err)
+			cf.noDomains = !c.domain
+			out := &bytes.Buffer{}
+			err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), false)
+			if err == nil || !strings.Contains(err.Error(), "ccunified server update --force") || cf.uploaded != nil {
+				t.Fatalf("got %v\n%s", err, out)
+			}
+			out.Reset()
+			if err := serverUpdate(context.Background(), prompt.New(strings.NewReader("tok\n1\n"), out), factory, testAssets(t), true); err != nil {
+				t.Fatalf("with --force: %v\n%s", err, out)
+			}
+			if cf.uploaded == nil || !strings.Contains(out.String(), "going ahead (--force)") {
+				t.Fatalf("not updated with --force:\n%s", out)
+			}
+		})
+	}
+}
+
+// A Worker left without its database (setup stopped partway) can be removed.
+func TestServerRemoveLeftoverWorker(t *testing.T) {
+	cf := &fakeCF{t: t, goodToken: "tok", db: d1test.New(t), workerAccount: "acc2", domain: "z1/ccu.example.org->ccunified"}
+	factory := func(token string) Cloudflare { cf.token = token; return cf }
+	out := &bytes.Buffer{}
+	if err := ServerRemove(context.Background(), prompt.New(strings.NewReader("tok\nccu.example.org\n"), out), factory); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Join(cf.calls, ",") != "delete-domain:dom1,delete-worker:ccunified" {
+		t.Fatalf("calls: %v", cf.calls)
+	}
+	if !strings.Contains(out.String(), `Account "Work" has a dashboard Worker`) || !strings.Contains(out.String(), "run ccunified setup again") {
+		t.Fatalf("output:\n%s", out)
 	}
 }
 

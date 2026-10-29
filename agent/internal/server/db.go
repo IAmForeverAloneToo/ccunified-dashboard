@@ -43,21 +43,55 @@ const migrationsTable = `CREATE TABLE IF NOT EXISTS d1_migrations(
 // Migration is one migration file (see serverassets).
 type Migration = serverassets.Migration
 
-// ApplyMigrations applies the migrations that haven't been applied yet.
-// Each migration runs as one transaction together with its bookkeeping row.
-func ApplyMigrations(ctx context.Context, db D1, migrations []serverassets.Migration) ([]string, error) {
+// AppliedMigrations returns the names of the migrations the database has,
+// in the order they were applied.
+func AppliedMigrations(ctx context.Context, db D1) ([]string, error) {
 	if _, err := db.Query(ctx, migrationsTable); err != nil {
 		return nil, fmt.Errorf("preparing migrations: %w", err)
 	}
-	rows, err := db.Query(ctx, "SELECT name FROM d1_migrations")
+	rows, err := db.Query(ctx, "SELECT name FROM d1_migrations ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, r := range rows {
+		if name, ok := r["name"].(string); ok {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// UnknownMigrations returns the migrations the database has that aren't in
+// migrations: the database was set up by a newer ccunified.
+func UnknownMigrations(ctx context.Context, db D1, migrations []serverassets.Migration) ([]string, error) {
+	applied, err := AppliedMigrations(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, m := range migrations {
+		known[m.Name] = true
+	}
+	var unknown []string
+	for _, name := range applied {
+		if !known[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	return unknown, nil
+}
+
+// ApplyMigrations applies the migrations that haven't been applied yet.
+// Each migration runs as one transaction together with its bookkeeping row.
+func ApplyMigrations(ctx context.Context, db D1, migrations []serverassets.Migration) ([]string, error) {
+	names, err := AppliedMigrations(ctx, db)
 	if err != nil {
 		return nil, err
 	}
 	done := map[string]bool{}
-	for _, r := range rows {
-		if name, ok := r["name"].(string); ok {
-			done[name] = true
-		}
+	for _, name := range names {
+		done[name] = true
 	}
 	var applied []string
 	for _, m := range migrations {

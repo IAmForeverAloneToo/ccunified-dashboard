@@ -112,10 +112,26 @@ expired works too.
 
 ### `ccunified server update`
 
+```
+ccunified server update [--force]
+```
+
 Brings the dashboard on Cloudflare up to this program's version: applies any
 new database changes and uploads the new dashboard. Your data, users and
 settings stay. Run it after `ccunified update`, on the machine you just
-updated. It refuses to replace a newer dashboard with an older program's.
+updated.
+
+It refuses to replace a newer dashboard with an older program's. It checks
+the database, which tells for sure ("this dashboard is newer than this
+ccunified"), and asks the dashboard which version it runs. If the dashboard
+can't be asked (it doesn't answer, has no address, or this is a development
+build), it stops and explains; `--force` goes ahead anyway. `--force` never
+overrides a dashboard that is known to be newer: run `ccunified update`
+first.
+
+| Option | |
+|---|---|
+| `--force` | Update even if the dashboard's version can't be checked |
 
 ### `ccunified server reset-password`
 
@@ -133,6 +149,10 @@ Permanently deletes the dashboard from Cloudflare: its subdomain, the Worker
 and the database with all usage, users and settings. You confirm by typing the
 dashboard's hostname, such as `usage.example.com`. Afterwards, run
 `ccunified uninstall` on each machine.
+
+If the account has no ccunified database but does have a `ccunified` Worker,
+left by a setup that stopped partway, it removes that Worker and its
+subdomain, so that `ccunified setup` can be run again.
 
 ## Updating
 

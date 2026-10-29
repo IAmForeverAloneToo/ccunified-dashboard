@@ -58,6 +58,29 @@ func TestMigrationsApplyOnceAndAreRecorded(t *testing.T) {
 	}
 }
 
+// A database set up by a newer ccunified has migrations this one doesn't know.
+func TestUnknownMigrations(t *testing.T) {
+	ctx := context.Background()
+	m := workerMigrations(t)
+	db := d1test.New(t)
+	if unknown, err := UnknownMigrations(ctx, db, m); err != nil || len(unknown) != 0 {
+		t.Fatalf("new database: %v %v", unknown, err)
+	}
+	if _, err := ApplyMigrations(ctx, db, m); err != nil {
+		t.Fatal(err)
+	}
+	if unknown, err := UnknownMigrations(ctx, db, m); err != nil || len(unknown) != 0 {
+		t.Fatalf("same migrations: %v %v", unknown, err)
+	}
+	future := append(m[:len(m):len(m)], serverassets.Migration{Name: "9999_future.sql", SQL: "SELECT 1;"})
+	if _, err := ApplyMigrations(ctx, db, future); err != nil {
+		t.Fatal(err)
+	}
+	if unknown, err := UnknownMigrations(ctx, db, m); err != nil || strings.Join(unknown, ",") != "9999_future.sql" {
+		t.Fatalf("newer database: %v %v", unknown, err)
+	}
+}
+
 func TestFailedMigrationLeavesNoTrace(t *testing.T) {
 	db := d1test.New(t)
 	ctx := context.Background()
