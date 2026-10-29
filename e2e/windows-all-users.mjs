@@ -1,13 +1,14 @@
 // Sets ccunified up for every account on a Windows computer, as a deployment
 // tool would, and checks that the scheduled task, running as SYSTEM, uploads
-// this account's usage: the real program, Task Scheduler and ccusage, against
-// a local dashboard (CI's Windows runners; needs an elevated window).
+// this account's usage with ccusage running as this account, not as SYSTEM:
+// the real program, Task Scheduler and ccusage, against a local dashboard
+// (CI's Windows runners; needs an elevated window).
 //
 //   npm run build -w dashboard
 //   node e2e/windows-all-users.mjs <folder with ccunified.exe and ccusage.exe>
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { join } from "node:path";
 import { startDemo } from "../worker/scripts/demo.mjs";
@@ -21,9 +22,13 @@ const exe = join(bin, "ccunified.exe");
 const fail = (message) => {
   throw new Error(message);
 };
-const run = (args) => {
+const run = (args, env = {}) => {
   try {
-    const out = execFileSync(exe, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const out = execFileSync(exe, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
     console.log(`$ ccunified ${args.join(" ")}\n${out}`);
     return out;
   } catch (e) {
@@ -32,6 +37,25 @@ const run = (args) => {
   }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The owner of a file or folder, like "BUILTIN\Administrators". */
+const ownerOf = (path) =>
+  execFileSync(
+    "powershell",
+    ["-NoProfile", "-Command", "(Get-Acl -LiteralPath $env:CCU_PATH).Owner"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, CCU_PATH: path },
+    },
+  ).trim();
+const filesIn = (dir) =>
+  existsSync(dir)
+    ? readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => join(e.parentPath, e.name))
+    : [];
+
+// Where ccusage caches the prices it fetches, in this account's profile.
+const cache = join(homedir(), ".cache", "ccusage");
 
 // This account's Claude Code usage, where Claude Code keeps it.
 const project = join(homedir(), ".claude", "projects", "C--ci-project");
@@ -72,7 +96,8 @@ const user = userInfo().username;
 const machine = `${hostname()} (${user})`;
 let ok = false;
 try {
-  let out = run(["setup", "--url", url, "--enroll-key", key, "--all-users"]);
+  // The key comes from the environment, so it's not on the command line.
+  let out = run(["setup", "--url", url, "--all-users"], { CCUNIFIED_ENROLL_KEY: key });
   if (!out.includes("Task Scheduler")) fail("the scheduled task wasn't set up");
   if (!out.includes(`${user}: Waiting for approval on ${url} as "${machine}".`)) {
     fail(`${user} didn't ask to join as "${machine}"`);
@@ -83,6 +108,16 @@ try {
   if (/BUILTIN\\Users|Everyone|Authenticated Users/i.test(acl)) {
     fail(`${programData} is readable by everyone`);
   }
+  const owner = ownerOf(programData);
+  if (!/^(BUILTIN\\Administrators|NT AUTHORITY\\SYSTEM)$/i.test(owner)) {
+    fail(`${programData} belongs to ${owner}`);
+  }
+
+  // SYSTEM may not write to ccusage's cache: whatever gets cached there,
+  // ccusage wrote as this account.
+  rmSync(cache, { recursive: true, force: true });
+  mkdirSync(cache, { recursive: true });
+  execFileSync("icacls", [cache, "/deny", "*S-1-5-18:(OI)(CI)(W)"], { stdio: "inherit" });
 
   // Approved on the dashboard; the SYSTEM task picks it up.
   await demo.db
@@ -102,13 +137,28 @@ try {
       .first();
     tokens = row?.n ?? 0;
   }
-  if (tokens !== wantTokens) {
-    const log = join(programData, "ccunified.log");
+  const log = join(programData, "ccunified.log");
+  const showLog = () => {
     if (existsSync(log))
       console.log(execFileSync("cmd", ["/c", "type", log], { encoding: "utf8" }));
+  };
+  if (tokens !== wantTokens) {
+    showLog();
     fail(`the SYSTEM task uploaded ${tokens} tokens for "${machine}", not ${wantTokens}`);
   }
   console.log(`✓ The SYSTEM task uploaded ${tokens} tokens for "${machine}"`);
+
+  const cached = filesIn(cache);
+  if (cached.length === 0) {
+    showLog();
+    fail(`ccusage cached nothing in ${cache}: it didn't run as ${user} (or couldn't fetch prices)`);
+  }
+  for (const file of cached) {
+    const who = ownerOf(file);
+    console.log(`${file}: owned by ${who}`);
+    if (/SYSTEM/i.test(who)) fail(`${file} was written by SYSTEM, not ${user}`);
+  }
+  console.log(`✓ ccusage ran as ${user}`);
 
   out = run(["status", "--all-users"]);
   if (!out.includes(`"${machine}", last upload`)) fail("status doesn't show the upload");
@@ -124,6 +174,7 @@ try {
 } finally {
   await demo.mf.dispose();
   rmSync(project, { recursive: true, force: true });
+  rmSync(cache, { recursive: true, force: true });
 }
 console.log(ok ? "✓ Every account on a Windows computer" : "✗ failed");
 process.exit(ok ? 0 : 1);

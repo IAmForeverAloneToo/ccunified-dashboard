@@ -74,15 +74,20 @@ a time or all at once.
    | | |
    |---|---|
    | Linux, one account | `curl -fsSL …/install.sh \| CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_… sh` |
-   | Linux, every account | `curl -fsSL …/install.sh \| sudo env CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_… sh` |
+   | Linux, every account | `export CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_…; curl -fsSL …/install.sh \| sudo --preserve-env=CCUNIFIED_URL,CCUNIFIED_ENROLL_KEY sh` |
    | Windows, one account | `$env:CCUNIFIED_URL='https://usage.example.com'; $env:CCUNIFIED_ENROLL_KEY='ccu_e_…'; irm …/install.ps1 \| iex` |
    | Windows, every account | The same, run as SYSTEM (as Intune or Group Policy run scripts), or in an elevated window with `$env:CCUNIFIED_ALL_USERS='1'` added |
 
    `CCUNIFIED_NAME` sets the machine's name (default: its hostname) and
    `CCUNIFIED_INTERVAL` how often it uploads (15, 30 or 60 minutes; default
    15). On a machine that already has ccunified, run
-   `ccunified setup --url https://usage.example.com --enroll-key ccu_e_…`
-   instead (see [the commands](commands.md#ccunified-setup)).
+   `ccunified setup --url https://usage.example.com --enroll-key-file FILE`
+   instead, with the key in FILE (see [the commands](commands.md#ccunified-setup)).
+
+   The commands keep the key out of the command line, where every account on
+   the computer can see it while they run: it's passed in the environment
+   (which only the account itself and root can read). Use `sudo
+   --preserve-env=…` as shown, not `sudo env CCUNIFIED_ENROLL_KEY=…`.
 
 3. **Approve them.** On the **Approvals** page, under *Joined with an
    enrollment key*, tick the machines (the box in the header ticks them all)
@@ -103,20 +108,30 @@ elevated window), setup installs ccunified for the whole computer:
 - **Each account is its own machine** on the dashboard, named like
   `LAPTOP (alice)`. Each account that uses a coding tool asks to join; one
   without usage asks once it has some, and so do accounts added later.
-  Accounts where someone set ccunified up themselves are left alone, so no
-  usage is counted twice.
+  Accounts where someone set ccunified up themselves (or asked to join
+  themselves) are left alone, so no usage is counted twice.
 - **One background sync for the computer** runs as root or SYSTEM, whether or
   not anyone is logged in: a systemd timer (or `/etc/cron.d/ccunified`) on
   Linux, the Task Scheduler task `ccunified sync (all users)` on Windows.
 - **People's accounts only:** on Linux, accounts with an id of 1000 or more in
   `/etc/passwd`, and folders in `/home` (for accounts from a directory
   service); on Windows, the user profiles Windows lists.
-- **On Linux, ccusage runs as each account**, so it reads only that account's
-  files and leaves nothing owned by root in its home.
+- **ccusage runs as each account**, so it reads only that account's files
+  and leaves nothing owned by root or SYSTEM in its home. On Windows, SYSTEM
+  logs each account on without its password, as Task Scheduler does for tasks
+  that store none (a domain account needs a domain controller to answer). If
+  that fails, the account's sync fails ("couldn't run as …"); its usage is
+  never read as SYSTEM. In an administrator's elevated window, setup syncs
+  only that administrator's own account; the background sync, as SYSTEM, does
+  the others.
 - The program goes to `/opt/ccunified` (with the command in
   `/usr/local/bin`) or `%ProgramFiles%\ccunified`, and the settings, including
   the enrollment key, to a folder only administrators can read:
-  `/var/lib/ccunified` or `%ProgramData%\ccunified`.
+  `/var/lib/ccunified` or `%ProgramData%\ccunified`. Setup takes over a
+  settings folder someone else created first, and refuses one that is a link.
+- Setup copies the program only from a folder that is root's alone (on
+  Windows, not from another account's profile): run the install script as
+  root or SYSTEM, not setup from someone's own install.
 
 `ccunified status --all-users` shows where each account stands, and
 `ccunified uninstall --all-users` removes it all.

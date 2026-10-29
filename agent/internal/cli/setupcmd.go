@@ -3,8 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -35,7 +38,7 @@ func init() {
 		Name:    "setup",
 		Summary: "Create a new dashboard, or connect this machine to an existing one",
 		Usage: `ccunified setup [--no-schedule | --schedule-only]
-       ccunified setup --url URL --enroll-key KEY [--name NAME] [--interval 15|30|60] [--all-users | --this-user]
+       ccunified setup --url URL --enroll-key-file FILE [--name NAME] [--interval 15|30|60] [--all-users | --this-user]
 
 With an enrollment key (from the dashboard's Machines page), setup asks no
 questions: this machine asks to join, and starts uploading once an admin
@@ -43,7 +46,11 @@ approves it on the Approvals page. Run as root or SYSTEM (or with
 --all-users), it sets up every user account on the computer, each as its own
 machine. The options can also come from the environment: CCUNIFIED_URL,
 CCUNIFIED_ENROLL_KEY, CCUNIFIED_NAME, CCUNIFIED_INTERVAL and
-CCUNIFIED_ALL_USERS=1.`,
+CCUNIFIED_ALL_USERS=1.
+
+Keep the key out of the command line, where every account on the computer
+can see it while setup runs: put it in CCUNIFIED_ENROLL_KEY, in a file
+(--enroll-key-file), or on standard input (--enroll-key -).`,
 		Run: runSetup,
 	})
 	register(&Command{
@@ -129,7 +136,8 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	scheduleOnly := fs.Bool("schedule-only", false, "only (re)install the background sync")
 	noSchedule := fs.Bool("no-schedule", false, "don't set up the background sync (run ccunified sync yourself)")
 	url := fs.String("url", os.Getenv("CCUNIFIED_URL"), "the dashboard's address (with --enroll-key)")
-	key := fs.String("enroll-key", os.Getenv("CCUNIFIED_ENROLL_KEY"), "join with this enrollment key, asking no questions")
+	key := fs.String("enroll-key", os.Getenv("CCUNIFIED_ENROLL_KEY"), "join with this enrollment key, asking no questions (- reads it from standard input)")
+	keyFile := fs.String("enroll-key-file", "", "join with the enrollment key in this file, asking no questions")
 	name := fs.String("name", os.Getenv("CCUNIFIED_NAME"), "this machine's name on the dashboard (default: its hostname)")
 	interval := fs.Int("interval", envInt("CCUNIFIED_INTERVAL", 15), "sync every 15, 30 or 60 minutes")
 	allUsers := fs.Bool("all-users", os.Getenv("CCUNIFIED_ALL_USERS") == "1", "set up every user account on this computer (needs root or an administrator)")
@@ -146,11 +154,17 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 	if *allUsers && *thisUser {
 		return &UsageError{Msg: "use either --all-users or --this-user, not both"}
 	}
-	if *key != "" {
+	keyGiven := false
+	fs.Visit(func(f *flag.Flag) { keyGiven = keyGiven || f.Name == "enroll-key" })
+	k, err := enrollKey(env, *key, keyGiven, *keyFile)
+	if err != nil {
+		return err
+	}
+	if k != "" {
 		if *url == "" {
-			return &UsageError{Msg: "--enroll-key needs the dashboard's address too (--url)"}
+			return &UsageError{Msg: "an enrollment key needs the dashboard's address too (--url)"}
 		}
-		o := setup.EnrollOptions{URL: *url, Key: strings.TrimSpace(*key), Name: *name, Interval: *interval}
+		o := setup.EnrollOptions{URL: *url, Key: k, Name: *name, Interval: *interval}
 		p := prompt.New(strings.NewReader(""), env.Stdout)
 		if *allUsers || (profiles.SystemAccount() && !*thisUser) {
 			if !profiles.Privileged() {
@@ -182,6 +196,47 @@ func runSetup(ctx context.Context, env *Env, args []string) error {
 		h.InstallSchedule = nil
 	}
 	return setup.Run(ctx, p, h, cloudflareFactory)
+}
+
+// enrollKey is the enrollment key setup joins with: from a file
+// (--enroll-key-file), standard input (--enroll-key -), --enroll-key or
+// CCUNIFIED_ENROLL_KEY, or "" for none. A key on the command line is shown
+// to every account on the computer while setup runs (in the list of running
+// programs), so it gets a warning; the environment and files aren't.
+func enrollKey(env *Env, key string, onCommandLine bool, file string) (string, error) {
+	switch {
+	case file != "" && onCommandLine:
+		return "", &UsageError{Msg: "use either --enroll-key or --enroll-key-file, not both"}
+	case file != "":
+		info, err := os.Stat(file)
+		if err != nil {
+			return "", fmt.Errorf("couldn't read the enrollment key: %w", err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o044 != 0 {
+			fmt.Fprintf(env.Stderr, "Warning: other accounts on this computer may read %s; keep enrollment keys private (chmod 600 %s).\n", file, file)
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("couldn't read the enrollment key: %w", err)
+		}
+		if k := strings.TrimSpace(string(data)); k != "" {
+			return k, nil
+		}
+		return "", fmt.Errorf("%s is empty; put the enrollment key in it", file)
+	case key == "-":
+		data, err := io.ReadAll(io.LimitReader(env.Stdin, 4096))
+		if err != nil {
+			return "", fmt.Errorf("couldn't read the enrollment key: %w", err)
+		}
+		if k := strings.TrimSpace(string(data)); k != "" {
+			return k, nil
+		}
+		return "", errors.New("no enrollment key on standard input")
+	case onCommandLine && strings.TrimSpace(key) != "":
+		fmt.Fprintf(env.Stderr, "Warning: every account on this computer can see a key on the command line while setup runs.\n"+
+			"Pass it in CCUNIFIED_ENROLL_KEY, with --enroll-key-file FILE, or on standard input with --enroll-key - instead.\n")
+	}
+	return strings.TrimSpace(key), nil
 }
 
 func runServer(ctx context.Context, env *Env, args []string) error {

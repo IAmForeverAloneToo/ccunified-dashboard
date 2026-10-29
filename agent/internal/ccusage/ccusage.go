@@ -70,12 +70,18 @@ type Runner struct {
 	// Offline always uses ccusage's built-in price list.
 	Offline bool
 	// AsUser runs ccusage as another account (a system-wide install reading
-	// that account's usage; Linux only), so files it creates belong to it.
+	// that account's usage), so it reads only what the account may read and
+	// files it creates belong to it. See LogOn.
 	AsUser *Account
 }
 
-// Account is a user account's ids.
-type Account struct{ UID, GID int }
+// Account is a user account ccusage runs as: its ids on Linux; on Windows
+// its security id, domain and name, and its logon (see LogOn).
+type Account struct {
+	UID, GID          int
+	SID, Domain, User string
+	token             uintptr
+}
 
 // Locate finds ccusage next to the running program. CCUNIFIED_CCUSAGE
 // overrides the path (development and tests);

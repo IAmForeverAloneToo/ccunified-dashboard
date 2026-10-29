@@ -108,11 +108,31 @@ at your own subdomain.
   waiting with them.
 - Managers create keys only for the departments they manage, and approve only
   those departments' machines.
+- **Keys stay off the command line.** The install commands pass the key in
+  the environment (through `sudo --preserve-env`), which other accounts can't
+  read; the command line of a running program is visible to every account.
+  `ccunified setup` also reads it from a file (`--enroll-key-file`) or
+  standard input (`--enroll-key -`), and warns when it's given on the command
+  line.
 - **On a computer set up for every account**, the key and each account's
   upload key are in a folder only administrators can read (`/var/lib/ccunified`
-  or `%ProgramData%\ccunified`). On Linux, ccusage runs as each account, with
-  that account's rights and none of root's, so it reads only that account's
-  files. Each account's usage goes to its own machine on the dashboard.
+  or `%ProgramData%\ccunified`). The folder is created that way from the
+  start; one that already exists must be a real folder (not a link), and is
+  taken over if someone else created it first (any account may create folders
+  in ProgramData): Administrators become its owner, everything in it is made
+  private, and links in it are removed. On Linux it must belong to root.
+- ccusage runs **as each account**, with that account's rights and none of
+  root's or SYSTEM's, so it reads only that account's files. On Windows,
+  SYSTEM logs the account on without its password (an S4U logon, as Task
+  Scheduler uses for tasks that store no password); if that fails, the
+  account isn't synced rather than read as SYSTEM. It gets the computer's
+  proxy settings without their user name and password. Each account's usage
+  goes to its own machine on the dashboard.
+- **The program root or SYSTEM runs is theirs alone.** Setup for every
+  account copies it to `/opt/ccunified` (root's, writable by no one else) or
+  `%ProgramFiles%\ccunified`, and refuses to copy it from a folder other
+  accounts can change, such as someone's own install in their home folder
+  (on Windows, another account's profile).
 
 ## Passwords
 

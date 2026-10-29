@@ -21,7 +21,9 @@ asks before replacing its settings.
 |---|---|
 | `--no-schedule` | Don't set up the background sync, for when you run `ccunified sync` from your own scheduler |
 | `--schedule-only` | Only set up (or repair) the background sync, using the existing settings |
-| `--url URL --enroll-key KEY` | Join that dashboard with an enrollment key, asking nothing; it starts uploading once approved (see [Add many machines](adding-machines.md#add-many-machines-with-a-script)). Running it again changes nothing |
+| `--url URL --enroll-key-file FILE` | Join that dashboard with the enrollment key in FILE, asking nothing; it starts uploading once approved (see [Add many machines](adding-machines.md#add-many-machines-with-a-script)). Running it again changes nothing. On Linux, keep FILE private (`chmod 600`); setup warns if other accounts may read it |
+| `--enroll-key -` | The same, with the key read from standard input |
+| `--enroll-key KEY` | The same, with the key on the command line, where every account on the computer can see it while setup runs (setup warns). Prefer the options above or `CCUNIFIED_ENROLL_KEY` |
 | `--name NAME` | With a key: this machine's name on the dashboard (default: its hostname) |
 | `--interval 15\|30\|60` | With a key: how often to upload, in minutes (default 15) |
 | `--all-users` | With a key: set up every account on the computer, each as its own machine. The default when run as root or SYSTEM; needs root or an elevated window |
@@ -196,7 +198,7 @@ Set up for every account on the computer:
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its data, if not in the default place (read by ccusage) |
 | `CODEX_HOME` and the like | Where other tools keep their data, if not in the default place; ccusage reads the same variables the tools themselves use |
 | `CCUNIFIED_NO_SETUP=1` | Installers only: install without starting `ccunified setup` |
-| `CCUNIFIED_URL`, `CCUNIFIED_ENROLL_KEY` | Join that dashboard with an enrollment key, asking nothing (installers and `ccunified setup`) |
+| `CCUNIFIED_URL`, `CCUNIFIED_ENROLL_KEY` | Join that dashboard with an enrollment key, asking nothing (installers and `ccunified setup`). Unlike the command line, the environment is hidden from other accounts; to pass it through sudo, use `sudo --preserve-env=CCUNIFIED_URL,CCUNIFIED_ENROLL_KEY` |
 | `CCUNIFIED_NAME`, `CCUNIFIED_INTERVAL` | With a key: the machine's name and upload interval |
 | `CCUNIFIED_ALL_USERS=1` | With a key: set up every account on the computer (needs root or an elevated window; as root or SYSTEM, the default) |
 

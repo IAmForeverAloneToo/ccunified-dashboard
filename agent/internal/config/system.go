@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // A system-wide install (set up by root or SYSTEM with an enrollment key)
@@ -69,14 +70,30 @@ func LoadSystem() (*System, error) {
 
 // Save writes system.json, readable only by administrators.
 func (s *System) Save() error {
-	dir := SystemDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := SecureSystemDir(); err != nil {
 		return err
 	}
-	if err := restrictToAdmins(dir); err != nil {
-		return err
+	return writeJSONIn(SystemDir(), "system.json", s)
+}
+
+// SecureSystemDir creates the system-wide settings folder, private to
+// administrators, or makes sure the one there is (see makePrivateDir):
+// ProgramData lets any account create folders, so someone could have
+// created it first, and on Linux it must be root's.
+func SecureSystemDir() error { return makePrivateDir(SystemDir()) }
+
+// PrepareProfileDir does the same for an account's settings folder (and
+// the users folder it's in), before that account's sync writes to it.
+func PrepareProfileDir(user string) error {
+	if user == "" || user == "." || user == ".." || strings.ContainsAny(user, `/\`) {
+		return fmt.Errorf("%q can't be a settings folder's name", user)
 	}
-	return writeJSONIn(dir, "system.json", s)
+	for _, dir := range []string{SystemDir(), filepath.Join(SystemDir(), "users"), ProfileDir(user)} {
+		if err := makePrivateDir(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RemoveSystem deletes the system-wide settings, including every account's.

@@ -69,9 +69,15 @@ func RunSync(ctx context.Context, full bool) (res *syncer.Result, err error) {
 	}
 	if account != nil {
 		runner.Env = profiles.Env(os.Environ(), *account)
-		if account.UID >= 0 {
-			runner.AsUser = &ccusage.Account{UID: account.UID, GID: account.GID}
+		// ccusage runs as the account (never as root or SYSTEM).
+		as, err := ccusage.LogOn(ccusage.Account{UID: account.UID, GID: account.GID,
+			SID: account.SID, Domain: account.Domain, User: account.User})
+		if err != nil {
+			config.Log("sync failed: %v", err)
+			return nil, err
 		}
+		defer as.Close()
+		runner.AsUser = as
 	}
 	cfg, err := connect(ctx, runner, account)
 	if err != nil {

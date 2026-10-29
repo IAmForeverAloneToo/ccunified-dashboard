@@ -26,6 +26,34 @@ func TestEnvKeepsTheBasicsAndUsesTheAccountsHome(t *testing.T) {
 	}
 }
 
+func TestEnvDropsTheProxyPassword(t *testing.T) {
+	base := []string{
+		"HTTP_PROXY=http://root:s3cret@proxy.example:3128",
+		"https_proxy=root:s3cret@proxy.example:8080",
+		"ALL_PROXY=socks5://svc%40corp:s3cret@socks.example:1080/",
+		"NO_PROXY=localhost,.corp",
+	}
+	env := Env(base, Profile{Name: "alice", Home: "/home/alice", UID: 1001, GID: 1001})
+	for _, want := range []string{
+		"HTTP_PROXY=http://proxy.example:3128",
+		"https_proxy=proxy.example:8080",
+		"ALL_PROXY=socks5://socks.example:1080/",
+		"NO_PROXY=localhost,.corp",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("%s missing from %v", want, env)
+		}
+	}
+	for _, kv := range env {
+		if strings.Contains(kv, "s3cret") || strings.Contains(kv, "root") {
+			t.Errorf("%q leaked into the account's environment", kv)
+		}
+	}
+	if got, ok := withoutPassword("http://u:p@[::1"); ok {
+		t.Errorf("an unreadable proxy address was kept as %q", got)
+	}
+}
+
 func TestMachineName(t *testing.T) {
 	p := Profile{Name: "alice"}
 	if got := MachineName("LAPTOP-7", p); got != "LAPTOP-7 (alice)" {

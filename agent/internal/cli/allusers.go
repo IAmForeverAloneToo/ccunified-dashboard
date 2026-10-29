@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,13 +22,16 @@ import (
 
 // A system-wide install syncs each user account in a process of its own:
 // `ccunified sync` with the account's settings folder (CCUNIFIED_HOME) and
-// the account itself in these variables, so ccusage reads that account's
-// logs (and, on Linux, runs as that account).
+// the account itself in these variables, so ccusage runs as that account
+// and reads its logs.
 const (
-	envAccountName = "CCUNIFIED_ACCOUNT_NAME"
-	envAccountHome = "CCUNIFIED_ACCOUNT_HOME"
-	envAccountUID  = "CCUNIFIED_ACCOUNT_UID"
-	envAccountGID  = "CCUNIFIED_ACCOUNT_GID"
+	envAccountName   = "CCUNIFIED_ACCOUNT_NAME"
+	envAccountHome   = "CCUNIFIED_ACCOUNT_HOME"
+	envAccountUID    = "CCUNIFIED_ACCOUNT_UID"
+	envAccountGID    = "CCUNIFIED_ACCOUNT_GID"
+	envAccountSID    = "CCUNIFIED_ACCOUNT_SID"
+	envAccountDomain = "CCUNIFIED_ACCOUNT_DOMAIN"
+	envAccountUser   = "CCUNIFIED_ACCOUNT_USER"
 )
 
 // accountFromEnv is the account this process syncs for a system-wide
@@ -42,22 +46,33 @@ func accountFromEnv() *profiles.Profile {
 	if err1 != nil || err2 != nil {
 		uid, gid = -1, -1
 	}
-	return &profiles.Profile{Name: name, Home: home, UID: uid, GID: gid}
+	return &profiles.Profile{Name: name, Home: home, UID: uid, GID: gid,
+		SID: os.Getenv(envAccountSID), Domain: os.Getenv(envAccountDomain), User: os.Getenv(envAccountUser)}
 }
 
-// ownSetup reports whether an account set ccunified up itself (its own
-// settings exist), so the system-wide install leaves it alone rather than
-// uploading its usage twice.
+// ownSetup reports whether an account set ccunified up itself: its own
+// settings, or its request to join a dashboard, are in its settings folder
+// (~/.config/ccunified, or %APPDATA%\ccunified). The system-wide install
+// then leaves it alone rather than uploading its usage twice. Only names
+// are looked at, as root or SYSTEM: no links are followed and no files read.
 func ownSetup(p profiles.Profile) bool {
-	var dir string
-	switch runtime.GOOS {
-	case "windows":
-		dir = filepath.Join(p.Home, "AppData", "Roaming", "ccunified")
-	default:
-		dir = filepath.Join(p.Home, ".config", "ccunified")
+	parts := []string{".config", "ccunified"}
+	if runtime.GOOS == "windows" {
+		parts = []string{"AppData", "Roaming", "ccunified"}
 	}
-	_, err := os.Stat(filepath.Join(dir, "config.json"))
-	return err == nil
+	dir := p.Home
+	for _, part := range parts {
+		dir = filepath.Join(dir, part)
+		if info, err := os.Lstat(dir); err != nil || info.Mode().Type() != fs.ModeDir {
+			return false
+		}
+	}
+	for _, name := range []string{"config.json", "pending.json"} {
+		if info, err := os.Lstat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 // syncAllUsers is `ccunified sync --all-users`: one sync per user account.
@@ -66,6 +81,9 @@ func syncAllUsers(ctx context.Context, env *Env, full, quiet bool) error {
 		return errors.New("syncing every account needs root or SYSTEM")
 	}
 	if _, err := config.LoadSystem(); err != nil {
+		return err
+	}
+	if err := config.SecureSystemDir(); err != nil {
 		return err
 	}
 	// This run's own lock and log are in the system-wide folder.
@@ -85,24 +103,10 @@ func syncAllUsers(ctx context.Context, env *Env, full, quiet bool) error {
 	}
 	failed := 0
 	for _, a := range accounts {
-		var line string
-		if ownSetup(a) {
-			line = "set up by the account itself; skipped"
-		} else {
-			args := []string{"sync"}
-			if full {
-				args = append(args, "--full")
-			}
-			out, err := runAs(ctx, exe, a, args...)
-			line = summaryLine(out)
-			if err != nil {
-				line = lastLine(out)
-				failed++
-				if line == "" {
-					line = err.Error()
-				}
-				line = "failed: " + line
-			}
+		line, ok := syncAccount(ctx, exe, a, full)
+		if !ok {
+			failed++
+			line = "failed: " + line
 		}
 		config.Log("%s: %s", a.Name, line)
 		if !quiet {
@@ -118,6 +122,34 @@ func syncAllUsers(ctx context.Context, env *Env, full, quiet bool) error {
 	return nil
 }
 
+// syncAccount syncs one account and returns how it went.
+func syncAccount(ctx context.Context, exe string, a profiles.Profile, full bool) (string, bool) {
+	if ownSetup(a) {
+		return "set up by the account itself; skipped", true
+	}
+	if !profiles.CanRunAs(a) {
+		// An administrator's window, on Windows: only SYSTEM can run
+		// ccusage as another account.
+		return "skipped here; the background sync (as SYSTEM) syncs it", true
+	}
+	if err := config.PrepareProfileDir(a.Name); err != nil {
+		return err.Error(), false
+	}
+	args := []string{"sync"}
+	if full {
+		args = append(args, "--full")
+	}
+	out, err := runAs(ctx, exe, a, args...)
+	if err != nil {
+		line := lastLine(out)
+		if line == "" {
+			line = err.Error()
+		}
+		return line, false
+	}
+	return summaryLine(out), true
+}
+
 // runAs runs this program for one account (see envAccountName).
 func runAs(ctx context.Context, exe string, a profiles.Profile, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -130,6 +162,9 @@ func runAs(ctx context.Context, exe string, a profiles.Profile, args ...string) 
 		envAccountHome+"="+a.Home,
 		envAccountUID+"="+strconv.Itoa(a.UID),
 		envAccountGID+"="+strconv.Itoa(a.GID),
+		envAccountSID+"="+a.SID,
+		envAccountDomain+"="+a.Domain,
+		envAccountUser+"="+a.User,
 	)
 	var out bytes.Buffer
 	cmd.Stdout = &out

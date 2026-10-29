@@ -20,3 +20,6 @@ func Privileged() bool { return os.Geteuid() == 0 }
 // SystemAccount reports whether this program runs as root, as deployment
 // tools (Ansible, a startup script…) run scripts. Setup then installs for all users.
 func SystemAccount() bool { return os.Geteuid() == 0 }
+
+// CanRunAs reports whether this program can run ccusage as p (only as itself here).
+func CanRunAs(p Profile) bool { return os.Geteuid() == p.UID }
