@@ -11,6 +11,11 @@
 # Run as root, that sets up every user account on the computer (each with
 # usage is its own machine on the dashboard), with the program in
 # /opt/ccunified. Optional: CCUNIFIED_NAME, CCUNIFIED_INTERVAL (15, 30, 60).
+# Pass the key to root in the environment, not on sudo's command line
+# (which every account can see while it runs):
+#
+#   export CCUNIFIED_URL=https://usage.example.com CCUNIFIED_ENROLL_KEY=ccu_e_…
+#   curl -fsSL …/install.sh | sudo --preserve-env=CCUNIFIED_URL,CCUNIFIED_ENROLL_KEY sh
 #
 # Environment overrides (testing, forks):
 #   CCUNIFIED_REPO           owner/name of the GitHub repository

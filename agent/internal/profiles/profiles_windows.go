@@ -1,6 +1,7 @@
 package profiles
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +14,10 @@ import (
 const profileList = `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList`
 
 // List returns the people's accounts: the profiles Windows lists for local
-// and domain accounts (security ids S-1-5-21-…) whose folder exists.
+// and domain accounts (security ids S-1-5-21-…) whose folder exists, with
+// each account's domain and name. Profiles left behind by deleted accounts
+// are skipped; a domain account Windows can't look up right now (no domain
+// controller answers) is kept without them.
 func List() ([]Profile, error) {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, profileList, registry.ENUMERATE_SUB_KEYS)
 	if err != nil {
@@ -42,7 +46,15 @@ func List() ([]Profile, error) {
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
 			continue
 		}
-		out = append(out, Profile{Name: filepath.Base(path), Home: path, UID: -1, GID: -1})
+		p := Profile{Name: filepath.Base(path), Home: path, UID: -1, GID: -1, SID: sid}
+		if s, err := windows.StringToSid(sid); err == nil {
+			user, domain, _, err := s.LookupAccount("")
+			if errors.Is(err, windows.ERROR_NONE_MAPPED) {
+				continue
+			}
+			p.User, p.Domain = user, domain
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
@@ -50,15 +62,28 @@ func List() ([]Profile, error) {
 
 func homeEnv(p Profile) []string {
 	drive := filepath.VolumeName(p.Home)
-	return []string{
+	local := filepath.Join(p.Home, "AppData", "Local")
+	user := p.User
+	if user == "" {
+		user = p.Name
+	}
+	env := []string{
 		"USERPROFILE=" + p.Home,
 		"HOME=" + p.Home,
 		"HOMEDRIVE=" + drive,
 		"HOMEPATH=" + strings.TrimPrefix(p.Home, drive),
 		"APPDATA=" + filepath.Join(p.Home, "AppData", "Roaming"),
-		"LOCALAPPDATA=" + filepath.Join(p.Home, "AppData", "Local"),
-		"USERNAME=" + p.Name,
+		"LOCALAPPDATA=" + local,
+		"USERNAME=" + user,
+		// ccusage runs as the account: its own temporary and cache folders.
+		"TEMP=" + filepath.Join(local, "Temp"),
+		"TMP=" + filepath.Join(local, "Temp"),
+		"XDG_CACHE_HOME=" + filepath.Join(p.Home, ".cache"),
 	}
+	if p.Domain != "" {
+		env = append(env, "USERDOMAIN="+p.Domain)
+	}
+	return env
 }
 
 // Privileged reports whether this program may install for all users: it
@@ -72,4 +97,15 @@ func Privileged() bool {
 func SystemAccount() bool {
 	u, err := windows.GetCurrentProcessToken().GetTokenUser()
 	return err == nil && u.User.Sid.IsWellKnown(windows.WinLocalSystemSid)
+}
+
+// CanRunAs reports whether this program can run ccusage as p: SYSTEM logs
+// any account on without its password; an administrator runs it only as
+// itself.
+func CanRunAs(p Profile) bool {
+	if SystemAccount() {
+		return true
+	}
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	return err == nil && strings.EqualFold(u.User.Sid.String(), p.SID)
 }
