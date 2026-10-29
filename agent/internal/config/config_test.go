@@ -2,7 +2,9 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -121,5 +123,78 @@ func TestLock(t *testing.T) {
 	os.Chtimes(filepath.Join(dir, "sync.lock"), old, old)
 	if _, err := Lock(); err != nil {
 		t.Fatalf("stale lock not taken over: %v", err)
+	}
+}
+
+func TestUnlockLeavesATakenOverLockAlone(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	dir, _ := Dir()
+	path := filepath.Join(dir, "sync.lock")
+	unlock, err := Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(path, old, old)
+	unlock2, err := Lock()
+	if err != nil {
+		t.Fatalf("stale lock not taken over: %v", err)
+	}
+	unlock() // the first sync finally ends
+	if _, err := Lock(); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the new owner's lock was removed: %v", err)
+	}
+	unlock2()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock not released: %v", err)
+	}
+}
+
+func TestLockOfAnEndedProcessIsTakenOver(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("only the age rule applies on Windows")
+	}
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	dir, _ := Dir()
+	path := filepath.Join(dir, "sync.lock")
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(path, fmt.Appendf(nil, "%d %s\n", cmd.Process.Pid, time.Now().UTC().Format(time.RFC3339)), 0o600)
+	unlock, err := Lock()
+	if err != nil {
+		t.Fatalf("lock of an ended sync not taken over: %v", err)
+	}
+	unlock()
+
+	// A running process keeps its lock.
+	os.WriteFile(path, fmt.Appendf(nil, "%d %s\n", os.Getppid(), time.Now().UTC().Format(time.RFC3339)), 0o600)
+	if _, err := Lock(); !errors.Is(err, ErrBusy) {
+		t.Fatalf("lock of a running process taken over: %v", err)
+	}
+}
+
+func TestSaveNewStartsTheStateAfresh(t *testing.T) {
+	t.Setenv("CCUNIFIED_HOME", t.TempDir())
+	c := validConfig()
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	(&State{BackfillTimezone: "UTC", BackfillFormat: 2, UploadFormat: 2}).Save()
+	// The same machine saved again keeps its state.
+	if err := c.SaveNew(); err != nil || LoadState().BackfillTimezone != "UTC" {
+		t.Fatalf("err=%v state=%+v", err, LoadState())
+	}
+	// Setup run again: a new machine.
+	c.MachineID = "m-2"
+	if err := c.SaveNew(); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadState(); s.BackfillTimezone != "" || s.BackfillFormat != 0 || s.UploadFormat != 0 {
+		t.Fatalf("state kept: %+v", s)
+	}
+	if got, err := Load(); err != nil || got.MachineID != "m-2" {
+		t.Fatalf("config: %+v, %v", got, err)
 	}
 }

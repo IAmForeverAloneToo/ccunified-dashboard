@@ -90,7 +90,14 @@ to show and nobody waits at the machine:
    to 30 days.
 3. Each sync on the machine polls once (`POST /agent/pair/poll`). The first
    after approval saves the upload key, and the sync goes on to upload the
-   whole history.
+   whole history. The key is handed over only once, so it's written to
+   `pending.json` before `config.json`: if saving the settings fails, the
+   next sync finishes from there.
+
+Running `ccunified setup --enroll-key` again asks the dashboard about the
+waiting request (holding the sync lock, so it and a scheduled sync never
+claim the key at once). It asks to join anew only if the request was denied
+or expired; if the dashboard can't be asked, it says so and changes nothing.
 
 Set up for every account on a computer (as root or SYSTEM), setup checks the
 key (`POST /agent/enroll/check`, which doesn't use it up) and installs one
@@ -104,8 +111,9 @@ with usage and no settings yet enrolls as `HOST (account)`.
 
 The background sync runs `ccunified sync --quiet` on schedule:
 
-1. Takes a lock (`sync.lock`) so two syncs never overlap; a lock older than 30
-   minutes is considered abandoned.
+1. Takes a lock (`sync.lock`, holding the sync's process id) so two syncs
+   never overlap; a lock whose process has ended (on Linux and macOS) or that
+   is older than 30 minutes is considered abandoned.
 2. Runs the bundled ccusage after checking its SHA-256:
 
    ```
@@ -116,13 +124,21 @@ The background sync runs `ccunified sync --quiet` on schedule:
    download current prices, it's run again with its built-in prices
    (`--offline`). If it can't read the tools at all, the sync falls back to
    Claude Code alone (`ccusage claude daily …`), says so in `ccunified
-   status`, and tries every tool again on the next sync.
+   status`, and tries every tool again on the next sync. All of these runs
+   share one 5-minute limit; once it's reached, the sync stops.
 3. **Chooses what to send.** The first sync, the first after the dashboard's
    time zone changes, and the first in a newer upload format (see below)
    send the whole history still on disk. Later syncs send the last 7 days,
-   which also fills in anything missed while the machine was off.
+   or every day since the last successful sync if that's longer ago (more
+   than 100 days: the whole history again), so usage from while the machine
+   was off or offline is filled in.
 4. **Uploads** to `POST /agent/ingest` in pieces of at most 100 days (and well
    under the 256 KiB limit), authenticated with the machine's upload key.
+   Each upload lists the tools it covers, and each tool is covered only from
+   its first day with usage in what was read: days whose logs the tool has
+   since deleted are never cleared, so the dashboard keeps them. A day with
+   more than 50 models keeps its 49 largest, and the rest are added up as
+   one `other-models` entry (`ccunified status` notes it).
 5. **The Worker replaces** that machine's rows for the uploaded days, for the
    tools the upload covers, in one transaction. Rows that didn't change
    aren't rewritten, so sending the same day again never counts it twice and
@@ -134,8 +150,12 @@ The background sync runs `ccunified sync --quiet` on schedule:
    the Worker refuses the upload (`409 timezone_mismatch`); the machine
    switches to the new zone and uploads its whole history again.
 7. Failed uploads are retried up to 6 times, waiting 1, 2, 4, 8 and 16 seconds
-   (or as long as the dashboard asks). The result goes to `state.json`, shown
-   by `ccunified status`, and a line to `ccunified.log`.
+   (or as long as the dashboard asks, up to a minute; if it asks for longer,
+   the next scheduled sync tries again). The result goes to `state.json`,
+   shown by `ccunified status`, and a line to `ccunified.log`, also when the
+   sync couldn't start (another sync running, ccusage missing, the dashboard
+   unreachable while waiting for approval). Setting up the machine again
+   starts `state.json` afresh, so the new machine uploads its whole history.
 
 8. **Prices**, at most once a day: after a successful sync, the machine asks
    the dashboard which models it has seen (`POST /agent/prices`), downloads

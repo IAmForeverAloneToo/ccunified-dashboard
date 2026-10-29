@@ -91,12 +91,18 @@ func explain(err error) error {
 // Check asks the dashboard whether the waiting request was approved. When
 // it was, it saves this machine's settings (config.json) and returns them;
 // while it waits, it returns ErrWaiting.
+//
+// The dashboard hands over the upload key only once, so it is kept in
+// pending.json before config.json is written: if that fails, the next Check
+// finishes from there.
 func Check(ctx context.Context, p *config.Pending) (*config.Config, error) {
 	switch p.Status {
 	case "denied":
 		return nil, ErrDenied
 	case "expired":
 		return nil, ErrExpired
+	case "approved":
+		return saveApproved(p)
 	}
 	poll, err := client.New(p.DashboardURL, "").PairPoll(ctx, p.DeviceCode)
 	if client.IsCode(err, http.StatusNotFound, "not_found") {
@@ -110,20 +116,16 @@ func Check(ctx context.Context, p *config.Pending) (*config.Config, error) {
 	case "pending":
 		return nil, ErrWaiting
 	case "approved":
-		cfg := &config.Config{
-			DashboardURL:        p.DashboardURL,
-			MachineID:           poll.Machine.ID,
-			MachineName:         poll.Machine.Name,
-			Token:               poll.Token,
-			Timezone:            poll.Timezone,
-			SyncIntervalMinutes: p.SyncIntervalMinutes,
+		approved := *p
+		approved.Status = "approved"
+		approved.MachineID = poll.Machine.ID
+		approved.MachineName = poll.Machine.Name
+		approved.Token = poll.Token
+		approved.Timezone = poll.Timezone
+		if err := approved.Save(); err != nil {
+			config.Log("approved, but pending.json couldn't be updated: %v", err)
 		}
-		if err := cfg.Save(); err != nil {
-			return nil, fmt.Errorf("approved, but the settings couldn't be saved: %w", err)
-		}
-		config.RemovePending()
-		config.Log("approved: machine %q on %s", cfg.MachineName, cfg.DashboardURL)
-		return cfg, nil
+		return saveApproved(&approved)
 	case "denied":
 		p.Status = "denied"
 	default:
@@ -132,4 +134,23 @@ func Check(ctx context.Context, p *config.Pending) (*config.Config, error) {
 	p.Save()
 	config.Log("request to join %s %s", p.DashboardURL, p.Status)
 	return Check(ctx, p)
+}
+
+// saveApproved writes the settings of an approved machine (config.json)
+// and removes pending.json.
+func saveApproved(p *config.Pending) (*config.Config, error) {
+	cfg := &config.Config{
+		DashboardURL:        p.DashboardURL,
+		MachineID:           p.MachineID,
+		MachineName:         p.MachineName,
+		Token:               p.Token,
+		Timezone:            p.Timezone,
+		SyncIntervalMinutes: p.SyncIntervalMinutes,
+	}
+	if err := cfg.SaveNew(); err != nil {
+		return nil, fmt.Errorf("approved, but the settings couldn't be saved (the next sync tries again): %w", err)
+	}
+	config.RemovePending()
+	config.Log("approved: machine %q on %s", cfg.MachineName, cfg.DashboardURL)
+	return cfg, nil
 }

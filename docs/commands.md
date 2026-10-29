@@ -42,9 +42,12 @@ ccusage supports. A dashboard that hasn't been updated to ccunified 0.2 yet
 accepts Claude Code's usage only; `sync` then says to run `ccunified server
 update`, and the first sync after that uploads every tool's history.
 
-A normal sync re-sends the last 7 days. The first sync on a machine, the
-first after the dashboard's time zone changes, and the first after the
-dashboard starts accepting every tool send the whole history still on disk.
+A normal sync re-sends the last 7 days, or every day since the last
+successful sync if that's longer ago. The first sync on a machine, the first
+after the dashboard's time zone changes, the first after the dashboard starts
+accepting every tool, and the first after more than 100 days without a
+successful sync send the whole history still on disk. Days whose logs a tool
+has since deleted stay on the dashboard.
 
 A machine that joined with an enrollment key and waits for approval asks the
 dashboard instead, and starts uploading once it's approved.

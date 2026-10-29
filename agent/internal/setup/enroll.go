@@ -67,6 +67,13 @@ func EnrollUser(ctx context.Context, p *prompt.Prompter, h *Hooks, o EnrollOptio
 	if err != nil {
 		return err
 	}
+	// Syncs follow up on the request too: hold their lock, so that a sync
+	// and this never claim the one-time upload key at the same moment.
+	unlock, err := lockSync(ctx, p, h)
+	if err != nil {
+		return err
+	}
+	defer unlock() // releasing twice is harmless
 	if cfg, err := config.Load(); err == nil {
 		if cfg.DashboardURL != url {
 			return fmt.Errorf("this machine already uploads to %s; to switch dashboards, run ccunified uninstall first", cfg.DashboardURL)
@@ -74,7 +81,9 @@ func EnrollUser(ctx context.Context, p *prompt.Prompter, h *Hooks, o EnrollOptio
 		p.Printf("This machine already uploads to %s as %q.\n", cfg.DashboardURL, cfg.MachineName)
 		return nil
 	}
-	if pend, err := config.LoadPending(); err == nil && pend.DashboardURL == url && pend.Status == "waiting" {
+	if pend, err := config.LoadPending(); err == nil && pend.DashboardURL != url && (pend.Status == "waiting" || pend.Status == "approved") {
+		return fmt.Errorf("this machine is already waiting for approval on %s; to switch dashboards, run ccunified uninstall first", pend.DashboardURL)
+	} else if err == nil && pend.DashboardURL == url {
 		cfg, err := enroll.Check(ctx, pend)
 		switch {
 		case errors.Is(err, enroll.ErrWaiting):
@@ -83,10 +92,15 @@ func EnrollUser(ctx context.Context, p *prompt.Prompter, h *Hooks, o EnrollOptio
 			installUserSchedule(p, h, pend.SyncIntervalMinutes)
 			return nil
 		case err == nil:
+			unlock() // the first sync takes the lock itself
 			p.Printf("Approved: this machine is %q on %s.\n", cfg.MachineName, url)
 			installUserSchedule(p, h, cfg.SyncIntervalMinutes)
 			firstSync(ctx, p, h)
 			return nil
+		case !errors.Is(err, enroll.ErrDenied) && !errors.Is(err, enroll.ErrExpired):
+			// The request may still be approved: asking again would use
+			// up the key once more and add the machine twice.
+			return err
 		}
 		// Denied or expired: ask again.
 	}
@@ -99,6 +113,27 @@ func EnrollUser(ctx context.Context, p *prompt.Prompter, h *Hooks, o EnrollOptio
 	p.Printf("An admin approves it on the dashboard's Approvals page. Its usage is\n")
 	p.Printf("uploaded at the first sync after that (syncs run every %d minutes).\n", o.Interval)
 	return nil
+}
+
+// lockSync takes the sync lock, waiting up to six minutes for a running
+// sync to finish.
+func lockSync(ctx context.Context, p *prompt.Prompter, h *Hooks) (func(), error) {
+	const tries = 180
+	for i := 0; ; i++ {
+		unlock, err := config.Lock()
+		if !errors.Is(err, config.ErrBusy) {
+			return unlock, err
+		}
+		if i == tries-1 {
+			return nil, fmt.Errorf("%w; try again in a few minutes", err)
+		}
+		if i == 0 {
+			p.Printf("Waiting for the running sync to finish…\n")
+		}
+		if err := h.sleep(ctx, 2*time.Second); err != nil {
+			return nil, err
+		}
+	}
 }
 
 func installUserSchedule(p *prompt.Prompter, h *Hooks, interval int) {

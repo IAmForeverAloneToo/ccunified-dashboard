@@ -179,6 +179,10 @@ func writeJSONIn(dir, name string, v any) error {
 // State is what each sync records, for `ccunified status` and for deciding
 // whether the full history still needs uploading.
 type State struct {
+	// MachineID and DashboardURL say which machine the state belongs to; a
+	// state left by another one (setup run again) is started afresh.
+	MachineID     string    `json:"machine_id,omitempty"`
+	DashboardURL  string    `json:"dashboard_url,omitempty"`
 	LastAttemptAt time.Time `json:"last_attempt_at,omitzero"`
 	LastSuccessAt time.Time `json:"last_success_at,omitzero"`
 	LastError     string    `json:"last_error,omitempty"`
@@ -229,3 +233,48 @@ func LoadStateIn(dir string) *State {
 }
 
 func (s *State) Save() error { return writeJSON("state.json", s) }
+
+// RecordAttempt notes in state.json a sync that ended before it could
+// upload, for `ccunified status`: err says why, or is nil when nothing went
+// wrong (the machine waits for approval), which clears an earlier problem.
+func RecordAttempt(at time.Time, err error) error {
+	s := LoadState()
+	if err == nil {
+		if s.LastError == "" {
+			return nil
+		}
+		s.LastError = ""
+	} else {
+		s.LastError = err.Error()
+	}
+	s.LastAttemptAt = at
+	return s.Save()
+}
+
+// SaveNew writes config.json for a machine that was just added to a
+// dashboard. If it replaces another machine (setup run again, or another
+// dashboard), the sync state is started afresh, so the new machine uploads
+// its whole history.
+func (c *Config) SaveNew() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if old, err := Load(); err != nil || old.MachineID != c.MachineID || old.DashboardURL != c.DashboardURL {
+		if err := removeState(); err != nil {
+			return err
+		}
+	}
+	return c.Save()
+}
+
+func removeState() error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	err = os.Remove(filepath.Join(dir, "state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}

@@ -35,7 +35,20 @@ var errNoUsageYet = errors.New("no usage on this account yet")
 // RunSync performs one sync with the saved configuration. If this machine
 // is waiting for approval to join, it asks the dashboard first (and returns
 // enroll.ErrWaiting while it waits).
-func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
+func RunSync(ctx context.Context, full bool) (res *syncer.Result, err error) {
+	// Problems before the sync itself (which records its own outcome) are
+	// logged and shown by `ccunified status` too.
+	started := false
+	defer func() {
+		switch {
+		case started || err == nil || errors.Is(err, config.ErrNotConfigured) || errors.Is(err, errNoUsageYet):
+		case errors.Is(err, enroll.ErrWaiting):
+			config.RecordAttempt(time.Now(), nil) // asking the dashboard worked
+		default:
+			config.Log("sync failed: %v", err)
+			config.RecordAttempt(time.Now(), err)
+		}
+	}()
 	account := accountFromEnv()
 	if account == nil {
 		if _, err := config.Load(); errors.Is(err, config.ErrNotConfigured) {
@@ -79,6 +92,7 @@ func RunSync(ctx context.Context, full bool) (*syncer.Result, error) {
 			return cfg.Save()
 		},
 	}
+	started = true
 	res, runErr := s.Run(ctx)
 	if runErr == nil {
 		reportPrices(ctx, cfg, state)
