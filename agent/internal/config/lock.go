@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -21,9 +22,11 @@ var ErrBusy = errors.New("another sync is already running on this machine")
 
 // Lock makes sure only one sync runs at a time. Call the returned function to release it.
 //
-// The lock file holds the process id of its owner. A lock whose process has
-// ended, or that is older than 30 minutes, is taken over; releasing a lock
-// that was taken over leaves the new owner's alone.
+// The lock file holds the process id of its owner, the time and a random
+// tag. A lock whose process has ended, or that is older than 30 minutes, is
+// taken over; releasing a lock that was taken over leaves the new owner's
+// alone. The tag tells two locks apart even when one process took over its
+// own with the clock showing the same time, as Windows' clock can.
 func Lock() (func(), error) {
 	dir, err := Dir()
 	if err != nil {
@@ -36,7 +39,7 @@ func Lock() (func(), error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			mine := fmt.Sprintf("%d %s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			mine := fmt.Sprintf("%d %s %s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano), rand.Text())
 			_, werr := f.WriteString(mine)
 			if cerr := f.Close(); werr == nil {
 				werr = cerr
