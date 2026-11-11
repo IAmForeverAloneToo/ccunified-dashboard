@@ -161,8 +161,8 @@ logs took more than 5 minutes, usually on a slow disk with a very large
 history. The next sync tries again.
 
 **A *Note* says some days "had more than 50 models"**: the dashboard takes at
-most 50 models per day; the smallest were added up as `other-models`, so no
-tokens or costs are lost.
+most 50 models per day; the smallest were added up as `other-models` (shown
+as *Smallest models (added up)*), so no tokens or costs are lost.
 
 **"this machine was revoked on the dashboard"** or **"the dashboard didn't
 accept this machine's upload key"**: the machine needs to join again; run

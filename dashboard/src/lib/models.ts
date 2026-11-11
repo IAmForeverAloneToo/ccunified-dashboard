@@ -21,6 +21,18 @@ const FAMILIES: [RegExp, string][] = [
   [/llama/, "Llama"],
 ];
 
+/**
+ * The entry a machine adds up a day's smallest models as, past the 50 models
+ * an upload may have per day (agent/internal/syncer, OtherModels). It's real
+ * usage, not the chart's gray "Other models", so it's named for what it is.
+ */
+export const OTHER_MODELS = "other-models";
+
+/** How a model is named in lists and tables. */
+export function modelLabel(model: string): string {
+  return model === OTHER_MODELS ? "Smallest models (added up)" : model;
+}
+
 const named = (word: string): Family => ({
   id: word,
   label: word.charAt(0).toUpperCase() + word.slice(1),
@@ -35,6 +47,7 @@ const named = (word: string): Family => ({
  * - Anything else by the first word of its name: nova-pro-v1 is Nova.
  */
 export function modelFamily(model: string): Family {
+  if (model === OTHER_MODELS) return { id: OTHER_MODELS, label: "Smallest models" };
   const name = model.toLowerCase();
   const words = name.split(/[^a-z0-9]+/).filter(Boolean);
   const claude = words.indexOf("claude");

@@ -507,6 +507,86 @@ test("model families keep their colors in every period", async ({ page }) => {
   }
 });
 
+test("machines past the eighth get their own color when few are shown", async ({ page }) => {
+  // Ten machines in all: the demo's four and six newer ones, of which only
+  // the newest has usage, today. Before, everything past the seventh machine
+  // was "Other machines", however few were on the chart.
+  await logIn(page);
+  const today = await dashboardToday(page);
+  const extra = Array.from({ length: 6 }, (_, i) => ({
+    id: `extra-${i}`,
+    name: `Extra PC ${i + 1}`,
+  }));
+  const now = Date.now();
+  await demo.db.batch([
+    ...extra.map((m, i) =>
+      demo.db
+        .prepare(
+          "INSERT INTO machines (id, name, os, arch, agent_version, ccusage_version, sync_interval_minutes, token_hash, created_at, last_seen_at, tools) VALUES (?1, ?2, 'linux', 'amd64', '0.7.1', '20.0.32', 15, ?3, ?4, ?4, '[\"claude\"]')",
+        )
+        .bind(m.id, m.name, `hash-${m.id}`, now - (6 - i) * 60_000),
+    ),
+    demo.db
+      .prepare(
+        "INSERT INTO usage_daily (machine_id, source, day, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd, updated_at) VALUES ('extra-5', 'claude', ?1, 'claude-opus-5-5', 1000, 2000, 0, 3000000, 1.5, ?2)",
+      )
+      .bind(today, now),
+    demo.db.prepare(
+      "UPDATE settings SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'data_version'",
+    ),
+  ]);
+  try {
+    const legend = page.locator(".legend .legend-item");
+    const swatchOf = (item: Locator) =>
+      item.locator(".swatch").evaluate((e) => [...e.classList].find((c) => c !== "swatch") ?? "");
+    for (const range of ["1", "7"]) {
+      await page.goto(new URL(`/?range=${range}`, demo.url).href);
+      const names = await page.evaluate(async (r) => {
+        const [s, m] = await Promise.all([
+          (await fetch(`/api/summary?days=${r}`)).json(),
+          (await fetch("/api/machines")).json(),
+        ]);
+        const ids = new Set(s.by_day_machine.map((x: { machine_id: string }) => x.machine_id));
+        return m.machines
+          .filter((x: { id: string }) => ids.has(x.id))
+          .sort(
+            (a: { created_at: number }, b: { created_at: number }) => a.created_at - b.created_at,
+          )
+          .map((x: { name: string }) => x.name) as string[];
+      }, range);
+      expect(names).toContain("Extra PC 6");
+      expect(names.length).toBeLessThanOrEqual(8);
+      // Every machine with usage is named, each in its own color.
+      await expect(legend).toHaveText(names);
+      const colors = await Promise.all((await legend.all()).map(swatchOf));
+      expect(colors).not.toContain("s-other");
+      expect(new Set(colors).size).toBe(names.length);
+      await expect(page.locator(".legend")).not.toContainText("Other machines");
+      // The Machines table under the chart names and colors it too.
+      const row = page.locator("tbody tr").filter({ hasText: "Extra PC 6" });
+      expect(await swatchOf(row)).toMatch(/^s[1-8]$/);
+    }
+
+    // On the Machines page, machines past the eighth have no color of their
+    // own (it depends on the period), so no swatch rather than Other's gray.
+    await page.goto(new URL("/machines", demo.url).href);
+    const machineRow = (name: string) => page.locator("tbody tr").filter({ hasText: name });
+    await expect(machineRow("Extra PC 6")).toBeVisible();
+    expect(await swatchOf(machineRow("Office PC"))).toBe("s1");
+    expect(await swatchOf(machineRow("Extra PC 4"))).toBe("s8");
+    expect(await swatchOf(machineRow("Extra PC 5"))).toBe("");
+    expect(await swatchOf(machineRow("Extra PC 6"))).toBe("");
+  } finally {
+    await demo.db.batch([
+      demo.db.prepare("DELETE FROM usage_daily WHERE machine_id LIKE 'extra-%'"),
+      demo.db.prepare("DELETE FROM machines WHERE id LIKE 'extra-%'"),
+      demo.db.prepare(
+        "UPDATE settings SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'data_version'",
+      ),
+    ]);
+  }
+});
+
 test.describe("filters", () => {
   const filterButton = (page: Page, name: string) =>
     page.getByRole("button", { name: new RegExp(`^${name} `) });

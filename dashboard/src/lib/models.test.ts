@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { familySeries, modelFamily } from "./models";
+import { familySeries, modelFamily, modelLabel } from "./models";
 import { OTHER } from "./series";
 
 describe("model families", () => {
@@ -92,5 +92,13 @@ describe("model families", () => {
     // Kimi gets a color no other family in view uses, not the gray fold.
     expect(series.get("kimi")).toMatchObject({ id: "kimi", label: "Kimi" });
     expect(series.get("kimi")?.colorClass).toMatch(/^s[2-8]$/);
+  });
+});
+
+describe("a machine's added-up smallest models", () => {
+  test("are named for what they are, apart from the chart's Other models", () => {
+    expect(modelFamily("other-models")).toEqual({ id: "other-models", label: "Smallest models" });
+    expect(modelLabel("other-models")).toBe("Smallest models (added up)");
+    expect(modelLabel("claude-opus-5-5")).toBe("claude-opus-5-5");
   });
 });

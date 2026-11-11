@@ -154,19 +154,26 @@ as Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.
   <img alt="The overview's chart split by tool: daily tokens stacked by Claude Code, Codex, Gemini CLI, OpenCode and Kimi" src="images/tools-light.png">
 </picture>
 
-- **Colors:** each tool keeps its color: tools get colors in the order the
-  dashboard first saw them. Past eight tools, the newest share a gray *Other
-  tools* in the chart (the Tools table still lists each one).
+- **Colors:** each machine, department, tool and model family keeps its
+  color, whatever the period or filters. Machines get colors in the order
+  they joined, tools and families in the order the dashboard first saw them.
+  The chart has eight colors: one seen after the eighth takes a color that
+  nothing else on the chart uses. Only what's on the chart counts, so a
+  chart with three of your twenty machines shows all three by name. Only
+  when a chart shows more than eight at once do the newest share a gray
+  *Other machines*, *Other tools*, … (the tables under the chart still list
+  each one). On the Machines page, the first eight machines show their
+  color; later ones have none of their own.
 - **Models** are grouped into families in the chart, whichever tool used
   them, and the Models table lists every exact model name. Claude models are
   grouped by the name after "claude" (Opus, Sonnet, Haiku, Mythos, and any
   new family), other vendors' models by their family (GPT, Gemini, Grok,
   Kimi, Qwen, GLM, DeepSeek, …), and anything else by the first word of its
-  name. Like tools, families get colors in the order the dashboard first saw
-  them; a family seen after the eighth takes a color that no other family in
-  view uses. Only when a chart shows more than eight families at once do the
-  newest share a gray *Other models*. A model used through several tools (say, Claude Sonnet in Claude
-  Code and in OpenCode) is one model.
+  name. A model used through several tools (say, Claude Sonnet in Claude
+  Code and in OpenCode) is one model. *Smallest models (added up)* is a
+  machine's own total of a day's smallest models, past the 50 models an
+  upload may have per day (see
+  [Troubleshooting](troubleshooting.md)).
 
 Costs are **estimates at API prices**. By default they're calculated by
 ccusage on each machine (OpenCode's are the costs OpenCode itself recorded);

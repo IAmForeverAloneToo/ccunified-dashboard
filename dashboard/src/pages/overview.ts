@@ -31,9 +31,9 @@ import {
   writeFilters,
 } from "../lib/filters";
 import { addDays, compactNumber, day, fullNumber, money, percent } from "../lib/format";
-import { familySeries, modelFamily } from "../lib/models";
+import { familySeries, modelFamily, modelLabel } from "../lib/models";
 import { type Choice, type MultiSelect, multiSelect } from "../lib/multiselect";
-import { OTHER, seriesOf, stableSeries } from "../lib/series";
+import { machineSeries, OTHER, REMOVED, seriesOf, stableSeries } from "../lib/series";
 import { toolName, toolSeries } from "../lib/tools";
 import type { PageContext } from "../main";
 
@@ -114,33 +114,6 @@ function addInto(into: Totals, t: Totals): void {
 }
 
 // ---------- Colors that follow the entity, never its rank ----------
-
-/**
- * Machines keep the color of their position in the order they joined
- * (oldest first), so filtering never repaints anyone. Past eight machines, the
- * newest fold into a gray "Other machines". Removed machines (their usage
- * kept) are gray "Removed machines", or part of "Other machines" when there
- * is one.
- */
-export function machineSeries(machines: Machine[]): Map<string, Series> {
-  const ordered = machines
-    .filter((m) => m.removed_at === null)
-    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-  const fold = ordered.length > 8;
-  const other: Series = { id: OTHER, label: "Other machines", colorClass: "s-other" };
-  const removed: Series = fold
-    ? other
-    : { id: REMOVED, label: "Removed machines", colorClass: "s-other" };
-  const map = new Map<string, Series>();
-  ordered.forEach((m, i) => {
-    map.set(m.id, fold && i >= 7 ? other : { id: m.id, label: m.name, colorClass: `s${i + 1}` });
-  });
-  for (const m of machines) if (m.removed_at !== null) map.set(m.id, removed);
-  return map;
-}
-
-/** The series and table row that removed machines' usage counts under. */
-const REMOVED = "removed";
 
 // ---------- Time buckets (the API picks one for the period) ----------
 
@@ -447,7 +420,7 @@ export async function overviewPage(ctx: PageContext) {
         const picked = f.models.includes(m);
         family.children.push({
           id: `m:${m}`,
-          label: m,
+          label: modelLabel(m),
           hidden: !used && !picked,
           stale: !used && picked,
           note: !used && picked ? note : undefined,
@@ -746,14 +719,12 @@ export async function overviewPage(ctx: PageContext) {
     keyOf: (row: Record<string, unknown>) => string;
   } {
     if (state.split === "machine") {
-      const map = machineSeries(machines);
-      const seen = new Set(s.by_day_machine.map((r) => map.get(r.machine_id)?.id ?? OTHER));
-      const all = [...new Map([...map.values()].map((sr) => [sr.id, sr])).values()];
-      const series = all.filter((sr) => seen.has(sr.id));
-      if (seen.has(OTHER) && !series.some((sr) => sr.id === OTHER)) {
-        series.push({ id: OTHER, label: "Other machines", colorClass: "s-other" });
-      }
-      return { series, keyOf: (r) => map.get(String(r.machine_id))?.id ?? OTHER };
+      const ids = s.by_day_machine.map((r) => r.machine_id);
+      const map = machineSeries(machines, ids);
+      return {
+        series: seriesOf(map, ids),
+        keyOf: (r) => map.get(String(r.machine_id))?.id ?? OTHER,
+      };
     }
     if (state.split === "department") {
       const seen = s.by_day_machine.map((r) => departmentOf(r.machine_id));
@@ -1010,7 +981,10 @@ export async function overviewPage(ctx: PageContext) {
   }
 
   function drawBreakdown(s: Summary) {
-    const map = machineSeries(machines);
+    const map = machineSeries(
+      machines,
+      s.by_day_machine.map((r) => r.machine_id),
+    );
     // Removed machines share one row.
     const rowOf = (id: string) => (machineById.get(id)?.removed_at ? REMOVED : id);
     const byMachine = new Map<string, Totals>();
@@ -1089,7 +1063,7 @@ export async function overviewPage(ctx: PageContext) {
         "Models",
         "Usage in this period, per model. The chart groups models by family.",
         [...byModel].map(([model, totals]) => ({
-          label: model,
+          label: modelLabel(model),
           // Where its cost comes from, once costs aren't simply ccusage's.
           sub:
             s.pricing && s.pricing.mode !== "ccusage"

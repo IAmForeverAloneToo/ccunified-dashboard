@@ -11,10 +11,10 @@ import {
 } from "../lib/api";
 import { type Child, command, confirmDialog, fill, h, openDialog, toast } from "../lib/dom";
 import { compactNumber, dateTime, OS_LABEL, relativeTime } from "../lib/format";
+import { machineSeries } from "../lib/series";
 import { toolList } from "../lib/tools";
 import type { PageContext } from "../main";
 import { enrollmentCard } from "./enrollment";
-import { machineSeries } from "./overview";
 
 const STATUS: Record<Machine["status"], string> = {
   ok: "Reporting",
@@ -169,7 +169,14 @@ export async function machinesPage(ctx: PageContext) {
   function draw() {
     if (!data) return;
     const { m, tokens30, tools } = data;
-    const colors = machineSeries(m.machines);
+    // The colors machines keep on the Overview. Machines past the eighth
+    // have none of their own (it depends on which machines a period shows),
+    // so they get no swatch here rather than Other's gray.
+    const colors = machineSeries(m.machines, []);
+    const ownColor = (id: string) => {
+      const sr = colors.get(id);
+      return sr?.id === id ? sr.colorClass : "";
+    };
     // The Tools column appears once machines report more than one tool.
     const showTools = new Set(m.machines.flatMap((x) => x.tools)).size > 1;
     // Department and owner columns, once there are departments or owners.
@@ -295,7 +302,7 @@ export async function machinesPage(ctx: PageContext) {
           h(
             "span",
             { class: "name-cell" },
-            h("span", { class: `swatch ${colors.get(machine.id)?.colorClass ?? "s-other"}` }),
+            h("span", { class: `swatch ${ownColor(machine.id)}` }),
             machine.name,
           ),
           h("span", { class: "sub" }, `${OS_LABEL[machine.os] ?? machine.os} (${machine.arch})`),
