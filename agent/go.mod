@@ -7,7 +7,7 @@ require (
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261011195143-3b414e3e8284
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
-	golang.org/x/text v0.43.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.61.1
 )
 
